@@ -14,7 +14,7 @@ const messages: Record<string, string> = {
   unavailable: "Authentication is temporarily unavailable.",
 };
 
-function CredentialsForm({ action, submitLabel, create = false }: { action: (form: FormData) => Promise<never>; submitLabel: string; create?: boolean }) {
+function CredentialsForm({ action, submitLabel, create = false }: { action: (form: FormData) => Promise<void>; submitLabel: string; create?: boolean }) {
   return <form action={action} className="grid gap-3">
     <label className="text-sm font-bold" htmlFor={create ? "signup-email" : "signin-email"}>Email address</label>
     <input className="focus-ring min-h-11 rounded-xl border bg-black/20 px-3 text-sm" id={create ? "signup-email" : "signin-email"} required type="email" name="email" autoComplete="email" placeholder="you@example.com" />
