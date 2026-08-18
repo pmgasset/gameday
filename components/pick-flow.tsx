@@ -37,7 +37,7 @@ export function PickFlow({ poolId, weekId, weekNumber, games, currentPick, saved
             <input type="hidden" name="weekId" value={weekId}/>
             <input type="hidden" name="gameId" value={candidate?.id ?? ""}/>
             <input type="hidden" name="teamId" value={candidate?.underdog.id ?? ""}/>
-            <AlertDialog.Action asChild><Button type="submit"><ShieldCheck size={16} className="mr-2"/>Confirm pick</Button></AlertDialog.Action>
+            <Button type="submit"><ShieldCheck size={16} className="mr-2"/>Confirm pick</Button>
             <AlertDialog.Cancel asChild><Button type="button" className="bg-transparent text-white ring-1 ring-white/15 hover:bg-white/5">Cancel</Button></AlertDialog.Cancel>
           </form>
         </AlertDialog.Content>
