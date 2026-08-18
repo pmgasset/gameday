@@ -5,7 +5,7 @@ GameDay is a private, season-long NFL underdog pick'em pool. Each active member 
 ## Start locally
 
 1. Install Node 20+ and run `npm install`.
-2. Copy `.env.example` to `.env.local` and add Supabase credentials.
+2. Copy `.env.example` to `.env.local` and add the public Supabase credentials.
 3. Start local Supabase, then run `supabase db push` (or apply `supabase/migrations/0001_gameday.sql`).
 4. Run `npm run dev`.
 
@@ -17,6 +17,6 @@ Without credentials, the player interface renders realistic fixture data. Fixtur
 
 ## Deployment
 
-Deploy to Vercel, set all environment variables, and configure the Vercel cron authentication header with `CRON_SECRET`. The cron is scheduled every five minutes; it only uses server-side credentials.
+Deploy the web app to Vercel with its standard Next.js defaults. NFL synchronization is a Supabase Edge Function scheduled from Supabase Postgres, so no Vercel Cron configuration or Vercel server secrets are required.
 
 Read [ARCHITECTURE.md](ARCHITECTURE.md), [SUPABASE_SETUP.md](SUPABASE_SETUP.md), and [SPORTS_DATA.md](SPORTS_DATA.md) before production setup.

@@ -10,7 +10,7 @@
 | Server enforced pick submission / assisted pick | IMPLEMENTED | `submit_pick` RPC |
 | Invitations, member approval, role assignment interfaces | IN PROGRESS | schema/security foundation; server admin actions and UI remain |
 | Commissioner dashboard | IN PROGRESS | responsive operational overview; CRUD remains |
-| BALLDONTLIE adapter and protected score sync | IMPLEMENTED | adapter + cron route |
+| BALLDONTLIE adapter and protected score sync | IMPLEMENTED | adapter + Supabase Edge Function / pg_cron setup |
 | Schedule/team import orchestration | IN PROGRESS | adapter exists; import job remains |
 | Manual game/spread overrides | IN PROGRESS | schema and sync precedence exist; admin controls remain |
 | Final scoring / correction safety | IMPLEMENTED | idempotent recomputation SQL |

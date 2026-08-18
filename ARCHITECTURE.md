@@ -2,7 +2,7 @@
 
 ## Boundaries
 
-The browser renders only GameDay's local data. It never calls BALLDONTLIE and never receives a service-role credential. Server cron → provider adapter → Supabase is the score path. React remains a presentation layer; deadlines, reveal visibility, eligibility, authorization, and scoring belong in shared domain functions and PostgreSQL.
+The browser renders only GameDay's local data. It never calls BALLDONTLIE and never receives a service-role credential. Supabase Cron → secured Supabase Edge Function → provider → Supabase is the score path. React remains a presentation layer; deadlines, reveal visibility, eligibility, authorization, and scoring belong in shared domain functions and PostgreSQL.
 
 `lib/sports/types.ts` is the provider contract; `BallDontLieSportsProvider` normalizes provider responses there. An alternate provider implements the same contract without affecting pages or the database model.
 
@@ -14,7 +14,7 @@ The browser renders only GameDay's local data. It never calls BALLDONTLIE and ne
 - `submit_pick` is a `security definer` RPC: it derives actor identity from `auth.uid()`, verifies active membership, verifies the stored underdog line, calculates deadline on the server, and audits the write. It permits another player's pick only for a pool admin.
 - The one-active-pick invariant is the `unique(pool_id, week_id, player_id)` constraint. Changing a valid pick updates that single row; historical spread is copied into `stored_spread`.
 - Pool lines are independent of games. Provider sync has no write path to `pool_game_lines`.
-- Admin and sync operations must be server-side. Cron rejects any request without a matching Bearer `CRON_SECRET`. Service keys must not use a `NEXT_PUBLIC_` name.
+- Admin and sync operations must be server-side. The scheduled Edge Function accepts only the secret Supabase API key stored in Vault; service keys must not use a `NEXT_PUBLIC_` name.
 
 ## Scoring and corrections
 

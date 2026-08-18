@@ -1,0 +1,7 @@
+project_id = "gameday"
+
+# The handler validates a Supabase secret API key itself. This allows pg_net to
+# call it with the `apikey` header, which is the supported service-to-function
+# authentication pattern for the new Supabase keys.
+[functions.sports-sync]
+verify_jwt = false
