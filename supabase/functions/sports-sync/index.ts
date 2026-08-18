@@ -1,20 +1,60 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 type RemoteGame = {
-  id: number; date: string; status: string; period?: number; time?: string;
-  home_team_score?: number; visitor_team_score?: number;
-  season: number; week: number; home_team: { id: number }; visitor_team: { id: number };
+  id: number;
+  date: string;
+  status: string;
+  period?: number;
+  time?: string;
+  home_team_score?: number;
+  visitor_team_score?: number;
+  season: number;
+  week: number;
+  home_team: { id: number };
+  visitor_team: { id: number };
 };
-type LocalGame = { id: string; provider_game_id: string; manual_override: boolean };
-type RemoteTeam = { id: number; abbreviation: string; city: string; name: string; conference?: string; division?: string };
-type OpenWeek = { nfl_week: number; seasons: { nfl_season: number; pool_id: string } | null };
-type SyncRequest = { poolId?: string; week?: number; source?: string };
+type RemoteTeam = {
+  id: number;
+  abbreviation: string;
+  location: string;
+  name: string;
+  conference?: string;
+  division?: string;
+};
+type OpenWeek = {
+  nfl_week: number;
+  seasons: { nfl_season: number; pool_id: string } | null;
+};
+type LocalGame = {
+  id: string;
+  provider_game_id: string;
+  nfl_season: number;
+  nfl_week: number;
+  kickoff_at: string;
+  status: "scheduled" | "in_progress";
+  manual_override: boolean;
+};
+type SyncMode = "schedule" | "live";
+type SyncRequest = {
+  poolId?: string;
+  week?: number;
+  source?: string;
+  mode?: SyncMode;
+};
+type WeekKey = { season: number; week: number };
+type TeamId = { id: string; provider_id: string | null };
+
+const PROVIDER = "balldontlie";
+const PROVIDER_BASE_URL = "https://api.balldontlie.io/nfl/v1";
+const LIVE_LOOKAHEAD_MS = 15 * 60 * 1000;
+const LIVE_LOOKBACK_MS = 12 * 60 * 60 * 1000;
 
 function configuredSecretKey(): string | undefined {
   const named = Deno.env.get("SUPABASE_SECRET_KEYS");
   if (named) return (JSON.parse(named) as Record<string, string>).default;
   return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"); // local/legacy fallback
 }
+
 function normalizeStatus(raw: string): "scheduled" | "in_progress" | "final" | "postponed" | "cancelled" {
   const value = raw.toLowerCase();
   if (value.includes("final")) return "final";
@@ -23,43 +63,218 @@ function normalizeStatus(raw: string): "scheduled" | "in_progress" | "final" | "
   return /q[1-4]|half|live|in progress/.test(value) ? "in_progress" : "scheduled";
 }
 
-async function importOpenWeekSchedule(database: ReturnType<typeof createClient>, providerKey: string, poolId?: string, requestedWeek?: number): Promise<void> {
-  let weeksQuery = database.from("weeks").select("nfl_week,seasons!inner(nfl_season,is_active,pool_id)").eq("seasons.is_active", true).eq("status", "open");
-  if (poolId) weeksQuery = weeksQuery.eq("seasons.pool_id", poolId);
-  if (requestedWeek) weeksQuery = weeksQuery.eq("nfl_week", requestedWeek);
-  const { data: weekData, error: weekError } = await weeksQuery;
-  if (weekError) throw weekError;
-  const weeks = (weekData ?? []) as unknown as OpenWeek[];
-  if (!weeks.length) return;
-  const teamResponse = await fetch("https://api.balldontlie.io/nfl/v1/teams?per_page=100", { headers: { Authorization: providerKey } });
-  if (!teamResponse.ok) throw new Error(`BALLDONTLIE ${teamResponse.status}`);
-  const teams = (await teamResponse.json() as { data: RemoteTeam[] }).data;
-  const teamMap = new Map<number, string>();
-  for (const team of teams) {
-    const { data, error } = await database.from("teams").upsert({ provider: "balldontlie", provider_id: String(team.id), abbreviation: team.abbreviation, city: team.city, name: team.name, conference: team.conference ?? null, division: team.division ?? null, active: true }, { onConflict: "abbreviation" }).select("id").single();
-    if (error) throw error; teamMap.set(team.id, data.id as string);
-  }
-  for (const week of weeks) {
-    if (!week.seasons) continue;
-    const response = await fetch(`https://api.balldontlie.io/nfl/v1/games?seasons[]=${week.seasons.nfl_season}&weeks[]=${week.nfl_week}&per_page=100`, { headers: { Authorization: providerKey } });
-    if (!response.ok) throw new Error(`BALLDONTLIE ${response.status}`);
-    const games = (await response.json() as { data: RemoteGame[] }).data;
-    for (const game of games) {
-      const home = teamMap.get(game.home_team.id), away = teamMap.get(game.visitor_team.id); if (!home || !away) continue;
-      const { error } = await database.from("games").upsert({ provider: "balldontlie", provider_game_id: String(game.id), nfl_season: game.season, nfl_week: game.week, home_team_id: home, away_team_id: away, kickoff_at: game.date, status: normalizeStatus(game.status), home_score: game.home_team_score ?? null, away_score: game.visitor_team_score ?? null, period: game.period ? `Q${game.period}` : null, game_clock: game.time ?? null, provider_synced_at: new Date().toISOString() }, { onConflict: "provider,provider_game_id", ignoreDuplicates: false });
-      if (error) throw error;
-    }
-  }
+function uniqueWeeks(weeks: WeekKey[]): WeekKey[] {
+  return [...new Map(weeks.map((week) => [`${week.season}:${week.week}`, week])).values()];
 }
 
-async function requesterCanImport(database: ReturnType<typeof createClient>, request: Request, payload: SyncRequest): Promise<boolean> {
+async function providerRequest<T>(providerKey: string, path: string): Promise<T> {
+  const response = await fetch(`${PROVIDER_BASE_URL}${path}`, {
+    headers: { Authorization: providerKey },
+  });
+  if (!response.ok) throw new Error(`BALLDONTLIE ${response.status}`);
+  return response.json() as Promise<T>;
+}
+
+async function getWeekGames(providerKey: string, season: number, week: number): Promise<RemoteGame[]> {
+  const result = await providerRequest<{ data: RemoteGame[] }>(
+    providerKey,
+    `/games?seasons[]=${season}&weeks[]=${week}&per_page=100`,
+  );
+  return result.data;
+}
+
+async function getOpenWeeks(
+  database: ReturnType<typeof createClient>,
+  poolId?: string,
+  requestedWeek?: number,
+): Promise<WeekKey[]> {
+  let query = database
+    .from("weeks")
+    .select("nfl_week,seasons!inner(nfl_season,is_active,pool_id)")
+    .eq("seasons.is_active", true)
+    .eq("status", "open");
+  if (poolId) query = query.eq("seasons.pool_id", poolId);
+  if (requestedWeek) query = query.eq("nfl_week", requestedWeek);
+  const { data, error } = await query;
+  if (error) throw error;
+  return uniqueWeeks(
+    ((data ?? []) as unknown as OpenWeek[]).flatMap((week) =>
+      week.seasons ? [{ season: week.seasons.nfl_season, week: week.nfl_week }] : [],
+    ),
+  );
+}
+
+async function ensureTeams(
+  database: ReturnType<typeof createClient>,
+  providerKey: string,
+  games: RemoteGame[],
+): Promise<Map<number, string>> {
+  const { data: storedTeams, error: storedTeamsError } = await database
+    .from("teams")
+    .select("id,provider_id")
+    .eq("provider", PROVIDER);
+  if (storedTeamsError) throw storedTeamsError;
+
+  const teamMap = new Map<number, string>();
+  for (const team of (storedTeams ?? []) as TeamId[]) {
+    if (team.provider_id) teamMap.set(Number(team.provider_id), team.id);
+  }
+
+  const neededIds = new Set(games.flatMap((game) => [game.home_team.id, game.visitor_team.id]));
+  const missingIds = [...neededIds].filter((id) => !teamMap.has(id));
+  if (!missingIds.length) return teamMap;
+
+  const { data: remoteTeams } = await providerRequest<{ data: RemoteTeam[] }>(providerKey, "/teams?per_page=100");
+  for (const team of remoteTeams.filter((team) => missingIds.includes(team.id))) {
+    const { data, error } = await database
+      .from("teams")
+      .upsert(
+        {
+          provider: PROVIDER,
+          provider_id: String(team.id),
+          abbreviation: team.abbreviation,
+          city: team.location,
+          name: team.name,
+          conference: team.conference ?? null,
+          division: team.division ?? null,
+          active: true,
+        },
+        { onConflict: "abbreviation" },
+      )
+      .select("id")
+      .single();
+    if (error) throw error;
+    teamMap.set(team.id, data.id as string);
+  }
+  return teamMap;
+}
+
+async function saveSchedule(
+  database: ReturnType<typeof createClient>,
+  providerKey: string,
+  poolId?: string,
+  requestedWeek?: number,
+): Promise<number> {
+  const weeks = await getOpenWeeks(database, poolId, requestedWeek);
+  if (!weeks.length) return 0;
+
+  const gamesByWeek = await Promise.all(
+    weeks.map(async (week) => getWeekGames(providerKey, week.season, week.week)),
+  );
+  const games = gamesByWeek.flat();
+  const teamMap = await ensureTeams(database, providerKey, games);
+  let affected = 0;
+
+  for (const game of games) {
+    const home = teamMap.get(game.home_team.id);
+    const away = teamMap.get(game.visitor_team.id);
+    if (!home || !away) continue;
+    const { data: existing, error: existingError } = await database
+      .from("games")
+      .select("manual_override")
+      .eq("provider", PROVIDER)
+      .eq("provider_game_id", String(game.id))
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (existing?.manual_override) continue;
+
+    const status = normalizeStatus(game.status);
+    const { data: savedGame, error } = await database.from("games").upsert(
+      {
+        provider: PROVIDER,
+        provider_game_id: String(game.id),
+        nfl_season: game.season,
+        nfl_week: game.week,
+        home_team_id: home,
+        away_team_id: away,
+        kickoff_at: game.date,
+        status,
+        home_score: game.home_team_score ?? null,
+        away_score: game.visitor_team_score ?? null,
+        period: game.period ? `Q${game.period}` : null,
+        game_clock: game.time ?? null,
+        provider_synced_at: new Date().toISOString(),
+      },
+      { onConflict: "provider,provider_game_id", ignoreDuplicates: false },
+    ).select("id").single();
+    if (error) throw error;
+    if (status === "final") {
+      const { error: scoringError } = await database.rpc("score_final_game", { p_game_id: savedGame.id as string });
+      if (scoringError) throw scoringError;
+    }
+    affected++;
+  }
+  return affected;
+}
+
+function isInLiveWindow(game: LocalGame, now: number): boolean {
+  if (game.status === "in_progress") return true;
+  const kickoff = new Date(game.kickoff_at).getTime();
+  return kickoff >= now - LIVE_LOOKBACK_MS && kickoff <= now + LIVE_LOOKAHEAD_MS;
+}
+
+async function syncLiveGames(
+  database: ReturnType<typeof createClient>,
+  providerKey: string,
+): Promise<number> {
+  const { data, error } = await database
+    .from("games")
+    .select("id,provider_game_id,nfl_season,nfl_week,kickoff_at,status,manual_override")
+    .eq("provider", PROVIDER)
+    .eq("manual_override", false)
+    .in("status", ["scheduled", "in_progress"]);
+  if (error) throw error;
+  const candidates = ((data ?? []) as LocalGame[]).filter((game) => isInLiveWindow(game, Date.now()));
+  if (!candidates.length) return 0;
+
+  const candidateIds = new Set(candidates.map((game) => game.provider_game_id));
+  const localGames = new Map(candidates.map((game) => [game.provider_game_id, game]));
+  const weeks = uniqueWeeks(candidates.map((game) => ({ season: game.nfl_season, week: game.nfl_week })));
+  const gameLists = await Promise.all(weeks.map((week) => getWeekGames(providerKey, week.season, week.week)));
+  let affected = 0;
+
+  for (const remote of gameLists.flat()) {
+    const providerGameId = String(remote.id);
+    if (!candidateIds.has(providerGameId)) continue;
+    const local = localGames.get(providerGameId);
+    if (!local) continue;
+    const status = normalizeStatus(remote.status);
+    const { error: updateError } = await database
+      .from("games")
+      .update({
+        kickoff_at: remote.date,
+        status,
+        home_score: remote.home_team_score ?? null,
+        away_score: remote.visitor_team_score ?? null,
+        period: remote.period ? `Q${remote.period}` : null,
+        game_clock: remote.time ?? null,
+        provider_synced_at: new Date().toISOString(),
+      })
+      .eq("id", local.id)
+      .eq("manual_override", false);
+    if (updateError) throw updateError;
+    if (status === "final") {
+      const { error: scoringError } = await database.rpc("score_final_game", { p_game_id: local.id });
+      if (scoringError) throw scoringError;
+    }
+    affected++;
+  }
+  return affected;
+}
+
+async function requesterCanImport(
+  database: ReturnType<typeof createClient>,
+  request: Request,
+  payload: SyncRequest,
+): Promise<boolean> {
   if (!payload.poolId || !Number.isInteger(payload.week)) return false;
   const authorization = request.headers.get("authorization");
   const token = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
   if (!token) return false;
   const { data: { user }, error: userError } = await database.auth.getUser(token);
   if (userError || !user) return false;
-  const { data: membership, error: membershipError } = await database.from("pool_members")
+  const { data: membership, error: membershipError } = await database
+    .from("pool_members")
     .select("pool_id")
     .eq("pool_id", payload.poolId)
     .eq("user_id", user.id)
@@ -70,8 +285,8 @@ async function requesterCanImport(database: ReturnType<typeof createClient>, req
 }
 
 /**
- * Server-only scheduled sync. Provider data is normalized here before it can
- * reach the database; pool lines are intentionally never read or written.
+ * The scheduler uses two modes: a three-hourly bulk schedule import and a
+ * five-minute live-score poll that only runs around kickoff or while live.
  */
 Deno.serve(async (request) => {
   const serviceKey = configuredSecretKey();
@@ -80,33 +295,32 @@ Deno.serve(async (request) => {
   const scheduledRequest = request.headers.get("apikey") === serviceKey;
   const providerKey = Deno.env.get("BALLDONTLIE_API_KEY");
   if (!providerKey) return Response.json({ error: "Provider not configured" }, { status: 503 });
-  const database = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  const database = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
   const commissionerRequest = !scheduledRequest && await requesterCanImport(database, request, payload);
   if (!scheduledRequest && !commissionerRequest) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  const { data: sync, error: syncError } = await database.from("provider_syncs").insert({ provider: "balldontlie" }).select("id").single();
+
+  const mode: SyncMode = commissionerRequest || payload.mode === "schedule" ? "schedule" : "live";
+  const { data: sync, error: syncError } = await database
+    .from("provider_syncs")
+    .insert({ provider: PROVIDER })
+    .select("id")
+    .single();
   if (syncError) return Response.json({ error: "Unable to record sync" }, { status: 500 });
+
   try {
-    await importOpenWeekSchedule(database, providerKey, commissionerRequest ? payload.poolId : undefined, commissionerRequest ? payload.week : undefined);
-    const { data: games, error } = await database.from("games").select("id,provider_game_id,manual_override").in("status", ["scheduled", "in_progress"]);
-    if (error) throw error;
-    let affected = 0;
-    for (const local of (games ?? []) as LocalGame[]) {
-      if (local.manual_override) continue;
-      const response = await fetch(`https://api.balldontlie.io/nfl/v1/games/${local.provider_game_id}`, { headers: { Authorization: providerKey } });
-      if (!response.ok) throw new Error(`BALLDONTLIE ${response.status}`);
-      const payload = await response.json() as { data: RemoteGame };
-      const remote = payload.data;
-      const state = normalizeStatus(remote.status);
-      const { error: updateError } = await database.from("games").update({ kickoff_at: remote.date, status: state, home_score: remote.home_team_score ?? null, away_score: remote.visitor_team_score ?? null, period: remote.period ? `Q${remote.period}` : null, game_clock: remote.time ?? null, provider_synced_at: new Date().toISOString() }).eq("id", local.id);
-      if (updateError) throw updateError;
-      if (state === "final") { const { error: scoringError } = await database.rpc("score_final_game", { p_game_id: local.id }); if (scoringError) throw scoringError; }
-      affected++;
-    }
-    await database.from("provider_syncs").update({ succeeded_at: new Date().toISOString(), affected_games: affected }).eq("id", sync.id);
-    return Response.json({ ok: true, affected });
+    const affected = mode === "schedule"
+      ? await saveSchedule(database, providerKey, commissionerRequest ? payload.poolId : undefined, commissionerRequest ? payload.week : undefined)
+      : await syncLiveGames(database, providerKey);
+    await database
+      .from("provider_syncs")
+      .update({ succeeded_at: new Date().toISOString(), affected_games: affected })
+      .eq("id", sync.id);
+    return Response.json({ ok: true, mode, affected });
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : "Unknown sync error";
     await database.from("provider_syncs").update({ error_message: message }).eq("id", sync.id);
-    return Response.json({ ok: false }, { status: 502 });
+    return Response.json({ ok: false, mode }, { status: 502 });
   }
 });

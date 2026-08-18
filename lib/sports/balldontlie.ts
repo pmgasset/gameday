@@ -9,7 +9,7 @@ function game(raw: RawGame): ProviderGame { return { externalId:String(raw.id),s
 export class BallDontLieSportsProvider implements SportsProvider {
   constructor(private readonly apiKey: string) {}
   private async request<T>(path: string): Promise<T> { const response = await fetch(`${API}${path}`, { headers:{ Authorization:this.apiKey }, cache:"no-store" }); if (!response.ok) throw new Error(`BALLDONTLIE ${response.status}`); return response.json() as Promise<T>; }
-  async getTeams(): Promise<ProviderTeam[]> { const result = await this.request<{data:Array<{id:number;abbreviation:string;city:string;name:string;conference?:string;division?:string}>}>("/teams"); return result.data.map(t=>({externalId:String(t.id),abbreviation:t.abbreviation,city:t.city,name:t.name,conference:t.conference,division:t.division})); }
+  async getTeams(): Promise<ProviderTeam[]> { const result = await this.request<{data:Array<{id:number;abbreviation:string;location:string;name:string;conference?:string;division?:string}>}>("/teams"); return result.data.map(t=>({externalId:String(t.id),abbreviation:t.abbreviation,city:t.location,name:t.name,conference:t.conference,division:t.division})); }
   async getWeekGames(season: number, week: number): Promise<ProviderGame[]> { const result = await this.request<{data:RawGame[]}>(`/games?seasons[]=${season}&weeks[]=${week}`); return result.data.map(game); }
   async getGame(externalId: string): Promise<ProviderGame | null> { const result = await this.request<{data:RawGame}>(`/games/${externalId}`); return result.data ? game(result.data) : null; }
 }
