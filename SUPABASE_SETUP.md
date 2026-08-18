@@ -1,6 +1,12 @@
 # Supabase setup
 
-Create a Supabase project, enable Email OTP/magic-link sign-in, and set Site URL/redirect URLs for the deployment. Add `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` to the app; add `SUPABASE_SERVICE_ROLE_KEY` only to Vercel/server environments.
+Create a Supabase project and enable the **Email** auth provider with password sign-in. GameDay uses email-and-password accounts, not magic links, so routine sign-ins do not consume the email-send quota. Set the Site URL to `https://thegameday.app` and add both `https://thegameday.app/auth/callback` and `https://www.thegameday.app/auth/callback` as Redirect URLs if both hostnames resolve to the app. Add `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` to the app; add `SUPABASE_SERVICE_ROLE_KEY` only to Vercel/server environments.
+
+## Email/password authentication
+
+In **Authentication → Providers → Email**, leave Email enabled and use password sign-in. You can disable magic-link/OTP sign-in there because the GameDay UI no longer requests it.
+
+For a private, invitation-only pool during initial setup, turn off **Confirm email** in the Email provider settings. Accounts will sign in immediately and the app's invitation approval flow remains the access control. This removes authentication email sends entirely. If you keep confirmation enabled, new accounts receive a confirmation email once, so configure a custom SMTP provider before inviting players; the default Supabase sender is intentionally rate-limited.
 
 ## Database schema
 
@@ -20,7 +26,7 @@ If you do not have terminal access, open **SQL Editor → New query** in the Sup
 
 Do not run either file against a shared project that already has GameDay-named tables or an unrelated `public.profiles` signup trigger.
 
-After signing in with magic link, the first user can create a pool through the GameDay onboarding screen. That user becomes the active Commissioner automatically; no manual SQL membership update is needed. Commissioners create invitation tokens under **Commissioner**, and invited users become `pending` until approved. Invitations store only a token hash (`sha256` or stronger), never the shareable raw token.
+After creating an account, the first user can create a pool through the GameDay onboarding screen. That user becomes the active Commissioner automatically; no manual SQL membership update is needed. Commissioners create invitation tokens under **Commissioner**, and invited users become `pending` until approved. Invitations store only a token hash (`sha256` or stronger), never the shareable raw token.
 
 Enable Realtime publication for `games` after testing privacy. Do not publish `picks`: game updates can be subscribed to publicly by authorized members while pick visibility remains enforced by query-time RLS.
 
