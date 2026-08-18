@@ -1,5 +1,5 @@
 -- GameDay core schema. Apply with `supabase db push`; never run this through a browser client.
-create extension if not exists pgcrypto;
+create extension if not exists pgcrypto with schema extensions;
 
 create type public.member_role as enum ('player', 'co_commissioner', 'commissioner');
 create type public.member_status as enum ('pending', 'active', 'rejected', 'removed');
