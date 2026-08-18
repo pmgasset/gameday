@@ -2,14 +2,25 @@
 
 Create a Supabase project, enable Email OTP/magic-link sign-in, and set Site URL/redirect URLs for the deployment. Add `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` to the app; add `SUPABASE_SERVICE_ROLE_KEY` only to Vercel/server environments.
 
-Apply the migration with the Supabase CLI:
+## Database schema
+
+Apply the migrations with the Supabase CLI:
 
 ```bash
 supabase link --project-ref YOUR_REF
 supabase db push
 ```
 
-Create a pool, then add its creator to `pool_members` as an active `commissioner`. Add members as `pending` after validating a hashed invitation token server-side; an admin approves them by changing the state to `active` and auditing the event. Invitations store only a token hash (`sha256` or stronger), never the shareable raw token.
+If you do not have terminal access, open **SQL Editor → New query** in the Supabase Dashboard and run these files in order:
+
+1. `supabase/migrations/0001_gameday.sql`
+2. `supabase/migrations/0002_live_pool_workflows.sql`
+3. `supabase/migrations/0003_manual_week_and_lines.sql`
+4. `supabase/migrations/0004_provider_import_and_realtime.sql`
+
+Do not run either file against a shared project that already has GameDay-named tables or an unrelated `public.profiles` signup trigger.
+
+After signing in with magic link, the first user can create a pool through the GameDay onboarding screen. That user becomes the active Commissioner automatically; no manual SQL membership update is needed. Commissioners create invitation tokens under **Commissioner**, and invited users become `pending` until approved. Invitations store only a token hash (`sha256` or stronger), never the shareable raw token.
 
 Enable Realtime publication for `games` after testing privacy. Do not publish `picks`: game updates can be subscribed to publicly by authorized members while pick visibility remains enforced by query-time RLS.
 
@@ -30,5 +41,9 @@ select vault.create_secret('YOUR_SUPABASE_SECRET_KEY', 'gameday_function_key');
 ```
 
 Finally run [`supabase/cron.sql`](supabase/cron.sql) in the SQL Editor. It installs a five-minute job and is safe to re-run because it removes the existing named job first. Inspect runs in Supabase Dashboard → Integrations → Cron. The Edge Function validates the Vault-held key before it performs privileged database work.
+
+With no terminal access, deploy `sports-sync` via **Edge Functions → Deploy a new function → Via Editor**. Use the source at `supabase/functions/sports-sync/index.ts`, turn off **Verify JWT**, then add `BALLDONTLIE_API_KEY` under Edge Function Secrets. The Vault and scheduler statements still run in SQL Editor.
+
+When a Commissioner opens a week, the next scheduled sync imports the matching BALLDONTLIE teams and games. Entering a manual pool line then attaches to that provider game, so scores update automatically. Migration `0004` enables Realtime only for `games`; `picks` are intentionally excluded to prevent hidden-pick leakage.
 
 For production administration, expose narrowly scoped server actions/RPCs for membership state, roles, lines, and overrides. Each must call `is_pool_admin`, write an `audit_events` record, and preserve explicit override metadata.

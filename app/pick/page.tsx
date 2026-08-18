@@ -1,3 +1,5 @@
 import { Header, BottomNav } from "@/components/navigation";
 import { PickFlow } from "@/components/pick-flow";
-export default function PickPage() { return <main className="mx-auto min-h-screen max-w-5xl pb-24"><Header/><PickFlow/><BottomNav/></main>; }
+import { Onboarding } from "@/components/onboarding";
+import { requirePoolContext } from "@/lib/data/pool";
+export default async function PickPage({ searchParams }: { searchParams: Promise<{ saved?: string; error?: string }> }) { const context=await requirePoolContext(); const params=await searchParams; if(!context.pool || !context.week) return <main className="min-h-screen"><Header/><Onboarding pending={context.pendingPool}/><BottomNav/></main>; const currentPick=context.picks.find((pick)=>pick.playerId===context.userId && context.games.some((game)=>game.id===pick.gameId)); return <main className="mx-auto min-h-screen max-w-5xl pb-24"><Header/><PickFlow poolId={context.pool.id} weekId={context.week.id} weekNumber={context.week.nfl_week} games={context.games} currentPick={currentPick} saved={params.saved === "1"} error={params.error}/><BottomNav/></main>; }

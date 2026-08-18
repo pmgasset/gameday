@@ -4,6 +4,8 @@ GameDay currently targets BALLDONTLIE NFL via `BallDontLieSportsProvider`. Requi
 
 The secured `sports-sync` Supabase Edge Function retrieves locally relevant scheduled/in-progress games, updates local game status/score metadata, and invokes idempotent final scoring. A provider failure preserves local data and records the error in `provider_syncs`; ordinary pages continue to render last-known data. The function intentionally skips `manual_override` games. Spreads never come from this provider and are never updated during sync.
 
+For an open GameDay week, the same function imports normalized BALLDONTLIE teams and that week’s schedule before scoring begins. Commissioners still enter the GameDay underdog line manually; if a matching provider game exists, the line attaches to it. This preserves the strict separation between provider schedule/score data and GameDay spreads.
+
 `supabase/cron.sql` schedules the Edge Function every five minutes using `pg_cron` and `pg_net`; the target URL and a Supabase secret API key live in Vault. This works independently of Vercel's plan. Production code should add bounded retry/backoff around transient provider failures and log health from `provider_syncs` in the commissioner dashboard.
 
 Development fixtures in `lib/fixtures/week.ts` cover Thursday, Sunday, Sunday afternoon/night, and Monday games. They are demo data, not a provider substitute.
