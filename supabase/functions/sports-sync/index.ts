@@ -7,7 +7,8 @@ type RemoteGame = {
 };
 type LocalGame = { id: string; provider_game_id: string; manual_override: boolean };
 type RemoteTeam = { id: number; abbreviation: string; city: string; name: string; conference?: string; division?: string };
-type OpenWeek = { nfl_week: number; seasons: { nfl_season: number } | null };
+type OpenWeek = { nfl_week: number; seasons: { nfl_season: number; pool_id: string } | null };
+type SyncRequest = { poolId?: string; week?: number; source?: string };
 
 function configuredSecretKey(): string | undefined {
   const named = Deno.env.get("SUPABASE_SECRET_KEYS");
@@ -22,8 +23,11 @@ function normalizeStatus(raw: string): "scheduled" | "in_progress" | "final" | "
   return /q[1-4]|half|live|in progress/.test(value) ? "in_progress" : "scheduled";
 }
 
-async function importOpenWeekSchedule(database: ReturnType<typeof createClient>, providerKey: string): Promise<void> {
-  const { data: weekData, error: weekError } = await database.from("weeks").select("nfl_week,seasons!inner(nfl_season,is_active)").eq("seasons.is_active", true).eq("status", "open");
+async function importOpenWeekSchedule(database: ReturnType<typeof createClient>, providerKey: string, poolId?: string, requestedWeek?: number): Promise<void> {
+  let weeksQuery = database.from("weeks").select("nfl_week,seasons!inner(nfl_season,is_active,pool_id)").eq("seasons.is_active", true).eq("status", "open");
+  if (poolId) weeksQuery = weeksQuery.eq("seasons.pool_id", poolId);
+  if (requestedWeek) weeksQuery = weeksQuery.eq("nfl_week", requestedWeek);
+  const { data: weekData, error: weekError } = await weeksQuery;
   if (weekError) throw weekError;
   const weeks = (weekData ?? []) as unknown as OpenWeek[];
   if (!weeks.length) return;
@@ -48,20 +52,41 @@ async function importOpenWeekSchedule(database: ReturnType<typeof createClient>,
   }
 }
 
+async function requesterCanImport(database: ReturnType<typeof createClient>, request: Request, payload: SyncRequest): Promise<boolean> {
+  if (!payload.poolId || !Number.isInteger(payload.week)) return false;
+  const authorization = request.headers.get("authorization");
+  const token = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
+  if (!token) return false;
+  const { data: { user }, error: userError } = await database.auth.getUser(token);
+  if (userError || !user) return false;
+  const { data: membership, error: membershipError } = await database.from("pool_members")
+    .select("pool_id")
+    .eq("pool_id", payload.poolId)
+    .eq("user_id", user.id)
+    .eq("status", "active")
+    .in("role", ["commissioner", "co_commissioner"])
+    .maybeSingle();
+  return !membershipError && Boolean(membership);
+}
+
 /**
  * Server-only scheduled sync. Provider data is normalized here before it can
  * reach the database; pool lines are intentionally never read or written.
  */
 Deno.serve(async (request) => {
   const serviceKey = configuredSecretKey();
-  if (!serviceKey || request.headers.get("apikey") !== serviceKey) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (!serviceKey) return Response.json({ error: "Service key unavailable" }, { status: 503 });
+  const payload = await request.json().catch(() => ({})) as SyncRequest;
+  const scheduledRequest = request.headers.get("apikey") === serviceKey;
   const providerKey = Deno.env.get("BALLDONTLIE_API_KEY");
   if (!providerKey) return Response.json({ error: "Provider not configured" }, { status: 503 });
   const database = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  const commissionerRequest = !scheduledRequest && await requesterCanImport(database, request, payload);
+  if (!scheduledRequest && !commissionerRequest) return Response.json({ error: "Unauthorized" }, { status: 401 });
   const { data: sync, error: syncError } = await database.from("provider_syncs").insert({ provider: "balldontlie" }).select("id").single();
   if (syncError) return Response.json({ error: "Unable to record sync" }, { status: 500 });
   try {
-    await importOpenWeekSchedule(database, providerKey);
+    await importOpenWeekSchedule(database, providerKey, commissionerRequest ? payload.poolId : undefined, commissionerRequest ? payload.week : undefined);
     const { data: games, error } = await database.from("games").select("id,provider_game_id,manual_override").in("status", ["scheduled", "in_progress"]);
     if (error) throw error;
     let affected = 0;
