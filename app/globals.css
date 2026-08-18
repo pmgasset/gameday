@@ -10,3 +10,10 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .surface { background:hsl(var(--surface) / .86); border:1px solid hsl(var(--border)); box-shadow:0 18px 45px hsl(222 45% 3% / .3); }
 .eyebrow { color:hsl(var(--primary)); font-size:.7rem; font-weight:800; letter-spacing:.16em; text-transform:uppercase; }
 .focus-ring:focus-visible { outline:2px solid hsl(var(--primary)); outline-offset:3px; }
+
+/* Pexels photo 13401743 by David Morris — https://www.pexels.com/photo/men-playing-american-football-match-13401743/ */
+.home-hero { background-image:linear-gradient(90deg,hsl(222 36% 7% / .93) 0%,hsl(222 36% 7% / .72) 52%,hsl(222 36% 7% / .2) 100%),url("https://images.pexels.com/photos/13401743/pexels-photo-13401743.jpeg?auto=compress&cs=tinysrgb&w=1800"); background-position:center; background-size:cover; box-shadow:inset 0 1px hsl(0 0% 100% / .12),0 22px 45px hsl(222 45% 3% / .24); }
+
+/* Pexels photo 31853532 by Ferat Söylemez — https://www.pexels.com/photo/american-football-player-on-field-in-uniform-31853532/ */
+.login-page { background:radial-gradient(ellipse 80% 60% at 12% 10%,hsl(153 76% 45% / .16),transparent 64%),hsl(var(--background)); }
+.login-photo { background-image:linear-gradient(0deg,hsl(222 36% 7% / .92) 0%,hsl(222 36% 7% / .34) 100%),url("https://images.pexels.com/photos/31853532/pexels-photo-31853532.jpeg?auto=compress&cs=tinysrgb&w=1600"); background-position:center; background-size:cover; }
