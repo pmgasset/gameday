@@ -11,14 +11,14 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
   const params = await searchParams;
   const context = await requirePoolContext();
   const pool = context.pool;
-  if (!pool) return <main className="min-h-screen"><Header/><Onboarding pending={context.pendingPool}/><BottomNav/></main>;
-  if (pool.role !== "commissioner" && pool.role !== "co_commissioner") return <main className="min-h-screen"><Header/><section className="mx-auto max-w-xl px-5 pt-16"><h1 className="text-3xl font-black">Commissioner access required</h1></section><BottomNav/></main>;
+  if (!pool) return <main className="min-h-screen"><Header weekNumber={context.week?.nfl_week}/><Onboarding pending={context.pendingPool}/><BottomNav/></main>;
+  if (pool.role !== "commissioner" && pool.role !== "co_commissioner") return <main className="min-h-screen"><Header weekNumber={context.week?.nfl_week}/><section className="mx-auto max-w-xl px-5 pt-16"><h1 className="text-3xl font-black">Commissioner access required</h1></section><BottomNav/></main>;
 
   const active = context.members.filter((member) => member.status === "active");
   const pending = context.members.filter((member) => member.status === "pending");
   const stats = [[String(active.length), "Active players", Users], [String(context.picks.length), "Picks submitted", ClipboardCheck], [String(pending.length), "Pending members", UserPlus], [context.lastSync ? "Live" : "Waiting", "NFL data", Activity]];
 
-  return <main className="mx-auto min-h-screen max-w-5xl pb-24"><Header/><section className="px-5 pt-6">
+  return <main className="mx-auto min-h-screen max-w-5xl pb-24"><Header weekNumber={context.week?.nfl_week}/><section className="px-5 pt-6">
     <Pill className="border-[hsl(var(--primary)/.4)] text-[hsl(var(--primary))]">Commissioner area</Pill>
     <h1 className="mt-3 text-3xl font-black">Run Week {context.week?.nfl_week ?? "—"}</h1>
     {params.error && <Card className="mt-5 border-red-500/40 p-4 text-sm text-red-200">{params.error}</Card>}
