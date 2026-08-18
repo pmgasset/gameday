@@ -1,5 +1,5 @@
 import { Activity, ClipboardCheck, Users, UserPlus } from "lucide-react";
-import { changeMemberRole, moderateMember, openWeek, saveManualLine, saveScheduledLine } from "@/app/actions/pool";
+import { changeMemberRole, importSchedule, moderateMember, openWeek, saveManualLine, saveScheduledLine } from "@/app/actions/pool";
 import { InvitationForm } from "@/components/invitation-form";
 import { BottomNav, Header } from "@/components/navigation";
 import { Onboarding } from "@/components/onboarding";
@@ -7,7 +7,8 @@ import { Button, Card, Pill } from "@/components/ui";
 import { requirePoolContext, type ScheduledGame } from "@/lib/data/pool";
 import { formatEastern } from "@/lib/domain/deadlines";
 
-export default async function AdminPage() {
+export default async function AdminPage({ searchParams }: { searchParams: Promise<{ error?: string; imported?: string }> }) {
+  const params = await searchParams;
   const context = await requirePoolContext();
   const pool = context.pool;
   if (!pool) return <main className="min-h-screen"><Header/><Onboarding pending={context.pendingPool}/><BottomNav/></main>;
@@ -20,6 +21,8 @@ export default async function AdminPage() {
   return <main className="mx-auto min-h-screen max-w-5xl pb-24"><Header/><section className="px-5 pt-6">
     <Pill className="border-[hsl(var(--primary)/.4)] text-[hsl(var(--primary))]">Commissioner area</Pill>
     <h1 className="mt-3 text-3xl font-black">Run Week {context.week?.nfl_week ?? "—"}</h1>
+    {params.error && <Card className="mt-5 border-red-500/40 p-4 text-sm text-red-200">{params.error}</Card>}
+    {params.imported !== undefined && <Card className="mt-5 border-[hsl(var(--primary)/.4)] p-4 text-sm text-[hsl(var(--primary))]">Official NFL schedule refreshed: {params.imported} game{params.imported === "1" ? "" : "s"} updated.</Card>}
     <div className="mt-7 grid grid-cols-2 gap-3 md:grid-cols-4">{stats.map(([value, label, Icon]) => { const Symbol = Icon as typeof Users; return <Card className="p-4" key={label as string}><Symbol className="text-[hsl(var(--primary))]" size={18}/><p className="mt-5 text-2xl font-black">{value as string}</p><p className="text-xs font-bold text-[hsl(var(--muted))]">{label as string}</p></Card>; })}</div>
     <div className="mt-6 grid gap-4 md:grid-cols-2"><InvitationForm poolId={pool.id}/><Card className="p-5"><p className="eyebrow">NFL data</p><p className="mt-2 text-xl font-black text-[hsl(var(--primary))]">{context.lastSync ? "Connected" : "Awaiting sync"}</p><p className="mt-2 text-sm text-[hsl(var(--muted))]">{context.lastSync ? `Last successful sync: ${new Date(context.lastSync).toLocaleString()}` : "Deploy and schedule the Supabase sports-sync function."}</p></Card></div>
     <WeekAndLineTools poolId={pool.id} week={context.week} schedule={context.schedule}/><MemberList poolId={pool.id} commissioner={pool.role === "commissioner"} currentUserId={context.userId} members={context.members}/>
@@ -29,8 +32,7 @@ export default async function AdminPage() {
 function WeekAndLineTools({ poolId, week, schedule }: { poolId: string; week: { id: string; nfl_week: number } | null; schedule: ScheduledGame[] }) {
   return <Card className="mt-6 p-5"><h2 className="font-black">Weeks & lines</h2>
     {!week ? <form action={openWeek} className="mt-4 flex flex-wrap gap-3"><input type="hidden" name="poolId" value={poolId}/><input className="focus-ring min-h-11 w-28 rounded-xl border bg-black/20 px-3 text-sm" name="week" type="number" min="1" max="25" required placeholder="Week"/><Button type="submit">Open & import schedule</Button></form>
-      : schedule.length ? <><p className="mt-2 text-sm text-[hsl(var(--muted))]">Week {week.nfl_week} imported. Set just the underdog and spread for each matchup.</p><div className="mt-4 grid gap-3">{schedule.map((game) => <ScheduledLineForm key={game.id} poolId={poolId} weekId={week.id} game={game}/>)}</div></>
-      : <ManualLineForm poolId={poolId} weekId={week.id}/>}
+      : <><div className="mt-4 flex flex-wrap items-center gap-3"><form action={importSchedule}><input type="hidden" name="poolId" value={poolId}/><input type="hidden" name="week" value={week.nfl_week}/><Button type="submit">Import / refresh official schedule</Button></form><p className="text-xs text-[hsl(var(--muted))]">Fetches the latest NFL schedule and scores for Week {week.nfl_week}.</p></div>{schedule.length ? <><p className="mt-5 text-sm text-[hsl(var(--muted))]">Week {week.nfl_week} imported. Set just the underdog and spread for each matchup.</p><div className="mt-4 grid gap-3">{schedule.map((game) => <ScheduledLineForm key={game.id} poolId={poolId} weekId={week.id} game={game}/>)}</div></> : <ManualLineForm poolId={poolId} weekId={week.id}/>}</>}
     {!week && <p className="mt-3 text-xs text-[hsl(var(--muted))]">Opening a week imports the official NFL schedule immediately. The background sync keeps scores and kickoff times current.</p>}
     {week && !schedule.length && <p className="mt-3 text-xs text-[hsl(var(--muted))]">The schedule is still loading or the provider is unavailable. You can add a manual game line as a fallback; it will be preserved from provider updates.</p>}
   </Card>;
