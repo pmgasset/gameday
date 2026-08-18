@@ -1,0 +1,3 @@
+export type ProviderTeam = { externalId: string; abbreviation: string; city: string; name: string; conference?: string; division?: string };
+export type ProviderGame = { externalId: string; season: number; week: number; homeExternalTeamId: string; awayExternalTeamId: string; kickoffAt: string; status: "scheduled" | "in_progress" | "final" | "postponed" | "cancelled"; homeScore: number | null; awayScore: number | null; period?: string; clock?: string };
+export interface SportsProvider { getTeams(): Promise<ProviderTeam[]>; getWeekGames(season: number, week: number): Promise<ProviderGame[]>; getGame(externalId: string): Promise<ProviderGame | null>; }

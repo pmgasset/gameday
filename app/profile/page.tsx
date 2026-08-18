@@ -1,0 +1,3 @@
+import { Header, BottomNav } from "@/components/navigation";
+import { Card } from "@/components/ui";
+export default function ProfilePage(){return <main className="mx-auto min-h-screen max-w-5xl pb-24"><Header/><section className="px-5 pt-6"><p className="eyebrow">Your account</p><h1 className="mt-2 text-3xl font-black">Profile</h1><Card className="mt-6 p-5"><div className="flex items-center gap-4"><div className="grid h-12 w-12 place-items-center rounded-full bg-[hsl(var(--primary))] font-black text-[hsl(var(--primary-foreground))]">YO</div><div><p className="font-black">Your GameDay account</p><p className="text-sm text-[hsl(var(--muted))]">Active player · Sunday Crew</p></div></div></Card></section><BottomNav/></main>}
