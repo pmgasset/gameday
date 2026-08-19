@@ -96,7 +96,14 @@ async function getWeekGames(providerKey: string, season: number, week: number): 
     providerKey,
     `/games?seasons[]=${season}&weeks[]=${week}&per_page=100`,
   );
-  return result.data;
+  const games = result.data ?? [];
+  const mismatch = games.find((game) => game.season !== season || game.week !== week);
+  if (mismatch) {
+    throw new Error(
+      `BALLDONTLIE returned game ${mismatch.id} for season ${mismatch.season}, week ${mismatch.week}; expected season ${season}, week ${week}`,
+    );
+  }
+  return games;
 }
 
 async function getWeekOdds(providerKey: string, season: number, week: number): Promise<RemoteOdds[]> {
