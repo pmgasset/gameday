@@ -86,6 +86,7 @@ const RUNDOWN_AFFILIATES: Record<string, string> = {
   fanduel: "23",
   betmgm: "22",
 };
+const RUNDOWN_REQUEST_INTERVAL_MS = 1_100;
 const LIVE_LOOKAHEAD_MS = 15 * 60 * 1000;
 const LIVE_LOOKBACK_MS = 12 * 60 * 60 * 1000;
 
@@ -116,14 +117,19 @@ async function providerRequest<T>(providerKey: string, path: string): Promise<T>
 }
 
 async function rundownRequest<T>(oddsKey: string, path: string): Promise<T> {
-  const response = await fetch(`${RUNDOWN_BASE_URL}${path}`, {
-    headers: { "X-TheRundown-Key": oddsKey },
-  });
-  if (!response.ok) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const response = await fetch(`${RUNDOWN_BASE_URL}${path}`, {
+      headers: { "X-TheRundown-Key": oddsKey },
+    });
+    if (response.ok) return response.json() as Promise<T>;
+    if (response.status === 429 && attempt < 2) {
+      await new Promise((resolve) => setTimeout(resolve, RUNDOWN_REQUEST_INTERVAL_MS * (attempt + 1)));
+      continue;
+    }
     const detail = (await response.text()).replace(/\s+/g, " ").slice(0, 180);
     throw new Error(`TheRundown ${response.status}${detail ? `: ${detail}` : ""}`);
   }
-  return response.json() as Promise<T>;
+  throw new Error("TheRundown rate limit retry exhausted");
 }
 
 async function getWeekGames(providerKey: string, season: number, week: number): Promise<RemoteGame[]> {
@@ -198,11 +204,15 @@ async function getGameOdds(oddsKey: string, games: OddsGame[]): Promise<RemoteOd
   if (!games.length) return [];
   const dates = [...new Set(games.map((game) => easternDate(game.kickoff_at)))];
   const affiliateIds = Object.values(RUNDOWN_AFFILIATES).join(",");
-  const responses = await Promise.all(dates.map((date) => rundownRequest<{ events?: RundownEvent[] }>(
-    oddsKey,
-    `/sports/2/events/${date}?market_ids=2&affiliate_ids=${affiliateIds}&main_line=true&hide_closed=true`,
-  )));
-  const events = responses.flatMap((response) => response.events ?? []);
+  const events: RundownEvent[] = [];
+  for (const [index, date] of dates.entries()) {
+    if (index > 0) await new Promise((resolve) => setTimeout(resolve, RUNDOWN_REQUEST_INTERVAL_MS));
+    const response = await rundownRequest<{ events?: RundownEvent[] }>(
+      oddsKey,
+      `/sports/2/events/${date}?market_ids=2&affiliate_ids=${affiliateIds}&main_line=true&hide_closed=true`,
+    );
+    events.push(...(response.events ?? []));
+  }
   return games.flatMap((game) => {
     const event = events.find((candidate) => rundownOddsForGame(game, candidate).length > 0);
     return event ? rundownOddsForGame(game, event) : [];
