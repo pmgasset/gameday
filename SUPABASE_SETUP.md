@@ -35,6 +35,8 @@ If you do not have terminal access, open **SQL Editor → New query** in the Sup
 14. `supabase/migrations/0014_official_nfl_week_calendar.sql`
 15. `supabase/migrations/0015_preseason_pool_weeks.sql`
 16. `supabase/migrations/0016_align_preseason_week_numbers.sql`
+17. `supabase/migrations/0017_commissioner_join_request_details.sql`
+18. `supabase/migrations/0018_developer_support_center.sql`
 
 Do not run either file against a shared project that already has GameDay-named tables or an unrelated `public.profiles` signup trigger.
 
@@ -85,3 +87,22 @@ order by odds_locked_at desc;
 ```
 
 For production administration, expose narrowly scoped server actions/RPCs for membership state, roles, lines, and overrides. Each must call `is_pool_admin`, write an `audit_events` record, and preserve explicit override metadata.
+
+## Developer support account
+
+Developer support accounts are created manually and are not pool roles. First create the account in **Authentication → Users → Add user**, using a dedicated developer email and a strong password. The signup trigger creates the matching `profiles` row automatically. Then, in SQL Editor, grant access using their email:
+
+```sql
+insert into public.developer_admins (user_id)
+select id
+from auth.users
+where email = 'developer@example.com'
+on conflict do nothing;
+```
+
+The account can then open `/developer`. The support center searches account names and emails and can create one 30-minute **read-only impersonation** session at a time. These sessions retain the developer’s own sign-in, cannot submit picks or change user/pool data, and can be ended explicitly. To revoke developer access, remove the row from `public.developer_admins`:
+
+```sql
+delete from public.developer_admins
+where user_id = (select id from auth.users where email = 'developer@example.com');
+```
