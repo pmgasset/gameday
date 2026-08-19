@@ -13,12 +13,22 @@ alter table public.games
 alter table public.weeks
   drop constraint if exists weeks_season_id_nfl_week_key;
 
-alter table public.weeks
-  add constraint weeks_season_id_season_type_nfl_week_key
-  unique (season_id, season_type, nfl_week);
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.weeks'::regclass
+      and conname = 'weeks_season_id_season_type_nfl_week_key'
+  ) then
+    alter table public.weeks
+      add constraint weeks_season_id_season_type_nfl_week_key
+      unique (season_id, season_type, nfl_week);
+  end if;
+end
+$$;
 
 drop index if exists public.games_week_idx;
-create index games_week_phase_idx on public.games(nfl_season, season_type, nfl_week);
+create index if not exists games_week_phase_idx on public.games(nfl_season, season_type, nfl_week);
 
 create or replace function public.create_pool_week(
   p_pool_id uuid,
