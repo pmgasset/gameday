@@ -120,6 +120,12 @@ function balldontlieSeasonType(seasonType: PoolSeasonType): number {
   return seasonType === "preseason" ? 1 : seasonType === "postseason" ? 3 : 2;
 }
 
+function providerWeekForPoolWeek(seasonType: PoolSeasonType, week: number): number {
+  // BALLDONTLIE reserves preseason Week 1 for the Hall of Fame Game. GameDay
+  // presents the three full NFL preseason weekends as Weeks 1–3 instead.
+  return seasonType === "preseason" ? week + 1 : week;
+}
+
 function rundownSportId(seasonType: PoolSeasonType): number {
   // TheRundown publishes NFL preseason in its dedicated sport feed. Regular
   // and playoff games are both available from its normal NFL feed.
@@ -151,15 +157,16 @@ async function rundownRequest<T>(oddsKey: string, path: string): Promise<T> {
 }
 
 async function getWeekGames(providerKey: string, season: number, week: number, seasonType: PoolSeasonType): Promise<RemoteGame[]> {
+  const providerWeek = providerWeekForPoolWeek(seasonType, week);
   const result = await providerRequest<{ data: RemoteGame[] }>(
     providerKey,
-    `/games?seasons[]=${season}&weeks[]=${week}&season_type[]=${balldontlieSeasonType(seasonType)}&per_page=100`,
+    `/games?seasons[]=${season}&weeks[]=${providerWeek}&season_type[]=${balldontlieSeasonType(seasonType)}&per_page=100`,
   );
   const games = result.data ?? [];
-  const mismatch = games.find((game) => game.season !== season || game.week !== week);
+  const mismatch = games.find((game) => game.season !== season || game.week !== providerWeek);
   if (mismatch) {
     throw new Error(
-      `BALLDONTLIE returned game ${mismatch.id} for season ${mismatch.season}, week ${mismatch.week}; expected season ${season}, week ${week}`,
+      `BALLDONTLIE returned game ${mismatch.id} for season ${mismatch.season}, week ${mismatch.week}; expected season ${season}, provider week ${providerWeek}`,
     );
   }
   return games;
@@ -476,6 +483,7 @@ async function saveSchedule(
   );
   const games = gamesByWeek.flatMap((weekGames, index) => weekGames.map((game) => ({
     ...game,
+    poolWeek: weeks[index].week,
     seasonType: weeks[index].seasonType,
   })));
   const teamMap = await ensureTeams(database, providerKey, games);
@@ -500,7 +508,7 @@ async function saveSchedule(
         provider: PROVIDER,
         provider_game_id: String(game.id),
         nfl_season: game.season,
-        nfl_week: game.week,
+        nfl_week: game.poolWeek,
         season_type: game.seasonType,
         home_team_id: home,
         away_team_id: away,

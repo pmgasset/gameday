@@ -34,6 +34,7 @@ If you do not have terminal access, open **SQL Editor → New query** in the Sup
 13. `supabase/migrations/0013_week_participation_and_member_exit.sql`
 14. `supabase/migrations/0014_official_nfl_week_calendar.sql`
 15. `supabase/migrations/0015_preseason_pool_weeks.sql`
+16. `supabase/migrations/0016_align_preseason_week_numbers.sql`
 
 Do not run either file against a shared project that already has GameDay-named tables or an unrelated `public.profiles` signup trigger.
 
@@ -67,7 +68,7 @@ TheRundown pre-fills each eligible underdog/spread using DraftKings first, then 
 
 ## Preseason pools
 
-Commissioners can create **Preseason Weeks 1–4** from the Commissioner dashboard. Preseason is stored separately from the identically numbered regular-season week, uses BALLDONTLIE's preseason schedule filter, and requests odds from TheRundown's dedicated NFL Preseason feed. The importer prefers DraftKings, FanDuel, and BetMGM, then falls back to theScore Bet, Pinnacle, and Bovada when those books are not carrying a preseason line. Apply migration `0015` before deploying the updated `sports-sync` function. Preseason odds are requested only when that preseason week is opened or refreshed, so setting up the option does not add ongoing API calls.
+Commissioners can create **Preseason Weeks 1–3** from the Commissioner dashboard. Preseason is stored separately from the identically numbered regular-season week, uses BALLDONTLIE's preseason schedule filter, and requests odds from TheRundown's dedicated NFL Preseason feed. BALLDONTLIE reserves its preseason Week 1 for the Hall of Fame Game, so GameDay maps its Weeks 1–3 to the three full NFL preseason weekends. The importer prefers DraftKings, FanDuel, and BetMGM, then falls back to theScore Bet, Pinnacle, and Bovada when those books are not carrying a preseason line. Apply migrations `0015` and `0016` before deploying the updated `sports-sync` function. Preseason odds are requested only when that preseason week is opened or refreshed, so setting up the option does not add ongoing API calls.
 
 Verify a Tuesday snapshot with:
 
