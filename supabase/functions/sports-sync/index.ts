@@ -59,7 +59,7 @@ type SyncRequest = {
 };
 type WeekKey = { season: number; week: number };
 type TeamId = { id: string; provider_id: string | null };
-type SyncOutcome = { affected: number; warning?: string };
+type SyncOutcome = { affected: number; warning?: string; gamesUpdated?: number; oddsLines?: number };
 
 const PROVIDER = "balldontlie";
 const PROVIDER_BASE_URL = "https://api.balldontlie.io/nfl/v1";
@@ -228,12 +228,14 @@ async function prefillOdds(
     return { affected: 0, warning: `BALLDONTLIE odds prefill failed: ${message}` };
   }
   const gamesByProviderId = new Map(games.map((game) => [game.provider_game_id, game]));
+  const usableGameIds = new Set<string>();
   let affected = 0;
   for (const oddsLine of selectedOdds(odds)) {
     const game = gamesByProviderId.get(String(oddsLine.game_id));
     if (!game) continue;
     const line = underdogForOdds(game, oddsLine);
     if (!line) continue;
+    usableGameIds.add(game.provider_game_id);
     const matchingPools = poolWeeks.filter((poolWeek) => poolWeek.season === game.nfl_season && poolWeek.week === game.nfl_week);
     for (const poolWeek of matchingPools) {
       const { error: lineError } = await database.rpc("prefill_odds_line", {
@@ -247,7 +249,12 @@ async function prefillOdds(
       affected++;
     }
   }
-  return { affected };
+  const missing = games.length - usableGameIds.size;
+  return {
+    affected,
+    oddsLines: affected,
+    warning: missing ? `BALLDONTLIE returned no usable underdog spread for ${missing} imported game${missing === 1 ? "" : "s"}.` : undefined,
+  };
 }
 
 async function storedGamesForPoolWeeks(
@@ -305,6 +312,7 @@ async function snapshotTuesdayOdds(
   const missing = games.length - usableGameIds.size;
   return {
     affected,
+    oddsLines: affected,
     warning: missing ? `Tuesday odds snapshot missing usable DraftKings spreads for ${missing} imported game${missing === 1 ? "" : "s"}.` : undefined,
   };
 }
@@ -368,7 +376,12 @@ async function saveSchedule(
   const odds = await prefillOdds(database, providerKey, poolWeeks);
   const { data: finalized, error: finalizeError } = await database.rpc("finalize_ready_pool_weeks");
   if (finalizeError) throw finalizeError;
-  return { affected: affected + odds.affected + Number(finalized ?? 0), warning: odds.warning };
+  return {
+    affected: affected + odds.affected + Number(finalized ?? 0),
+    gamesUpdated: affected,
+    oddsLines: odds.oddsLines ?? 0,
+    warning: odds.warning,
+  };
 }
 
 function isInLiveWindow(game: LocalGame, now: number): boolean {
@@ -425,7 +438,7 @@ async function syncLiveGames(
   }
   const { data: finalized, error: finalizeError } = await database.rpc("finalize_ready_pool_weeks");
   if (finalizeError) throw finalizeError;
-  return { affected: affected + Number(finalized ?? 0) };
+  return { affected: affected + Number(finalized ?? 0), gamesUpdated: affected };
 }
 
 function isTuesdaySnapshotTime(now = new Date()): boolean {
@@ -504,7 +517,7 @@ Deno.serve(async (request) => {
       .from("provider_syncs")
       .update({ succeeded_at: new Date().toISOString(), affected_games: outcome.affected, warning_message: outcome.warning ?? null })
       .eq("id", sync.id);
-    return Response.json({ ok: true, mode, affected: outcome.affected, warning: outcome.warning });
+    return Response.json({ ok: true, mode, ...outcome });
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : "Unknown sync error";
     await database.from("provider_syncs").update({ error_message: message }).eq("id", sync.id);
