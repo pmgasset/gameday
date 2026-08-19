@@ -90,6 +90,9 @@ const RUNDOWN_AFFILIATES: Record<string, string> = {
   draftkings: "19",
   fanduel: "23",
   betmgm: "22",
+  thescorebet: "24",
+  pinnacle: "3",
+  bovada: "2",
 };
 const RUNDOWN_REQUEST_INTERVAL_MS = 1_100;
 const LIVE_LOOKAHEAD_MS = 15 * 60 * 1000;
@@ -179,9 +182,12 @@ function normalized(value: string): string {
 
 function matchesRundownTeam(team: OddsGame["homeTeam"], remote: RundownEvent["teams"][number]): boolean {
   const localName = normalized(`${team.city} ${team.name}`);
+  const localCity = normalized(team.city);
   const remoteName = normalized(remote.name);
   return normalized(team.abbreviation) === normalized(remote.abbreviation ?? "")
     || localName === remoteName
+    || remoteName === localCity
+    || remoteName.endsWith(localCity)
     || remoteName.endsWith(normalized(team.name));
 }
 
@@ -224,7 +230,7 @@ async function getGameOdds(oddsKey: string, games: OddsGame[]): Promise<RemoteOd
     if (index > 0) await new Promise((resolve) => setTimeout(resolve, RUNDOWN_REQUEST_INTERVAL_MS));
     const response = await rundownRequest<{ events?: RundownEvent[] }>(
       oddsKey,
-      `/sports/${rundownSportId(date.seasonType)}/events/${date.date}?market_ids=2&affiliate_ids=${affiliateIds}&main_line=true&hide_closed=true`,
+      `/sports/${rundownSportId(date.seasonType)}/events/${date.date}?market_ids=2&affiliate_ids=${affiliateIds}&main_line=true&hide_closed=true&offset=240`,
     );
     events.push(...(response.events ?? []));
   }
@@ -306,7 +312,10 @@ function selectedOdds(odds: RemoteOdds[], allowedVendors?: string[]): RemoteOdds
     if (normalized === "draftkings") return 0;
     if (normalized === "fanduel") return 1;
     if (normalized === "betmgm") return 2;
-    return 3;
+    if (normalized === "thescorebet") return 3;
+    if (normalized === "pinnacle") return 4;
+    if (normalized === "bovada") return 5;
+    return 6;
   };
   const selected = new Map<string, RemoteOdds>();
   for (const line of odds) {

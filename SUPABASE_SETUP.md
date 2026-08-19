@@ -67,7 +67,7 @@ TheRundown pre-fills each eligible underdog/spread using DraftKings first, then 
 
 ## Preseason pools
 
-Commissioners can create **Preseason Weeks 1–4** from the Commissioner dashboard. Preseason is stored separately from the identically numbered regular-season week, uses BALLDONTLIE's preseason schedule filter, and requests odds from TheRundown's dedicated NFL Preseason feed. Apply migration `0015` before deploying the updated `sports-sync` function. Preseason odds are requested only when that preseason week is opened or refreshed, so setting up the option does not add ongoing API calls.
+Commissioners can create **Preseason Weeks 1–4** from the Commissioner dashboard. Preseason is stored separately from the identically numbered regular-season week, uses BALLDONTLIE's preseason schedule filter, and requests odds from TheRundown's dedicated NFL Preseason feed. The importer prefers DraftKings, FanDuel, and BetMGM, then falls back to theScore Bet, Pinnacle, and Bovada when those books are not carrying a preseason line. Apply migration `0015` before deploying the updated `sports-sync` function. Preseason odds are requested only when that preseason week is opened or refreshed, so setting up the option does not add ongoing API calls.
 
 Verify a Tuesday snapshot with:
 
