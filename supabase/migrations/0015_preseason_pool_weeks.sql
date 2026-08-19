@@ -38,7 +38,7 @@ declare
 begin
   if not public.is_pool_admin(p_pool_id) then raise exception 'Not authorized'; end if;
   if v_type not in ('preseason', 'regular', 'postseason') then raise exception 'Invalid season type'; end if;
-  if p_week not between 1 and case when v_type = 'preseason' then 4 when v_type = 'regular' then 18 else 5 end then
+  if p_week not between 1 and (case when v_type = 'preseason' then 4 when v_type = 'regular' then 18 else 5 end) then
     raise exception 'Invalid NFL week for this season type';
   end if;
 
