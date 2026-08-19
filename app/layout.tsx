@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Barlow, Barlow_Condensed } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 import { PwaInstallPrompt } from "@/components/pwa-install";
 import { SiteFooter } from "@/components/site-footer";
@@ -19,5 +20,5 @@ export const metadata: Metadata = {
 export const viewport: Viewport = { themeColor: "#0d1422", viewportFit: "cover" };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en"><body className={`${bodyFont.variable} ${displayFont.variable} font-sans antialiased`}>{children}<SiteFooter/><PwaInstallPrompt/></body></html>;
+  return <html lang="en"><body className={`${bodyFont.variable} ${displayFont.variable} font-sans antialiased`}>{children}<SiteFooter/><PwaInstallPrompt/><Analytics/></body></html>;
 }
