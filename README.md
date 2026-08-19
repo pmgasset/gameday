@@ -19,4 +19,6 @@ Without credentials, the player interface renders realistic fixture data. Fixtur
 
 Deploy the web app to Vercel with its standard Next.js defaults. NFL synchronization is a Supabase Edge Function scheduled from Supabase Postgres, so no Vercel Cron configuration or Vercel server secrets are required.
 
+GameDay is installable as a PWA. Android browsers offer an in-app **Install GameDay** prompt when eligible; on iPhone, Safari users receive the native **Share → Add to Home Screen** instructions.
+
 Read [ARCHITECTURE.md](ARCHITECTURE.md), [SUPABASE_SETUP.md](SUPABASE_SETUP.md), and [SPORTS_DATA.md](SPORTS_DATA.md) before production setup.
