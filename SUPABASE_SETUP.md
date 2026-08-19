@@ -26,6 +26,7 @@ If you do not have terminal access, open **SQL Editor → New query** in the Sup
 5. `supabase/migrations/0005_repair_invitation_crypto.sql`
 6. `supabase/migrations/0006_immediate_schedule_import.sql`
 7. `supabase/migrations/0007_player_lined_game_visibility.sql`
+9. `supabase/migrations/0009_reset_pool_gameplay.sql`
 8. `supabase/migrations/0008_pool_hardening_and_odds.sql`
 
 Do not run either file against a shared project that already has GameDay-named tables or an unrelated `public.profiles` signup trigger.

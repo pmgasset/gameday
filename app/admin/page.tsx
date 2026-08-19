@@ -3,11 +3,12 @@ import { changeMemberRole, finalizeWeek, importSchedule, moderateMember, openWee
 import { InvitationForm } from "@/components/invitation-form";
 import { BottomNav, Header } from "@/components/navigation";
 import { Onboarding } from "@/components/onboarding";
+import { ResetPoolForm } from "@/components/reset-pool-form";
 import { Button, Card, Pill } from "@/components/ui";
 import { requirePoolContext, type LiveGame, type PoolMember, type ScheduledGame } from "@/lib/data/pool";
 import { formatEastern } from "@/lib/domain/deadlines";
 
-export default async function AdminPage({ searchParams }: { searchParams: Promise<{ assisted?: string; error?: string; finalized?: string; imported?: string }> }) {
+export default async function AdminPage({ searchParams }: { searchParams: Promise<{ assisted?: string; error?: string; finalized?: string; imported?: string; reset?: string }> }) {
   const params = await searchParams;
   const context = await requirePoolContext();
   const pool = context.pool;
@@ -25,9 +26,10 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
     {params.imported !== undefined && <Card className="mt-5 border-[hsl(var(--primary)/.4)] p-4 text-sm text-[hsl(var(--primary))]">Official NFL schedule and available odds refreshed: {params.imported} update{params.imported === "1" ? "" : "s"} completed.</Card>}
     {params.assisted && <Card className="mt-5 border-[hsl(var(--primary)/.4)] p-4 text-sm text-[hsl(var(--primary))]">Assisted pick saved and recorded in the audit trail.</Card>}
     {params.finalized && <Card className="mt-5 border-[hsl(var(--primary)/.4)] p-4 text-sm text-[hsl(var(--primary))]">Week finalized. Season standings now include every official result.</Card>}
+    {params.reset && <Card className="mt-5 border-[hsl(var(--primary)/.4)] p-4 text-sm text-[hsl(var(--primary))]">Pool reset. Members were retained; open a new week to start again.</Card>}
     <div className="mt-7 grid grid-cols-2 gap-3 md:grid-cols-4">{stats.map(([value, label, Icon]) => { const Symbol = Icon as typeof Users; return <Card className="p-4" key={label as string}><Symbol className="text-[hsl(var(--primary))]" size={18}/><p className="mt-5 text-2xl font-black">{value as string}</p><p className="text-xs font-bold text-[hsl(var(--muted))]">{label as string}</p></Card>; })}</div>
     <div className="mt-6 grid gap-4 md:grid-cols-2"><InvitationForm poolId={pool.id}/><Card className="p-5"><p className="eyebrow">NFL data</p><p className="mt-2 text-xl font-black text-[hsl(var(--primary))]">{context.lastSync ? "Connected" : "Awaiting sync"}</p><p className="mt-2 text-sm text-[hsl(var(--muted))]">{context.lastSync ? `Last successful sync: ${new Date(context.lastSync).toLocaleString()}` : "Deploy and schedule the Supabase sports-sync function."}</p></Card></div>
-    <WeekAndLineTools poolId={pool.id} week={context.week} schedule={context.schedule}/><AssistedPickForm poolId={pool.id} weekId={context.week?.id} members={active} games={context.games}/><ResultsTools poolId={pool.id} week={context.week} games={context.games}/><MemberList poolId={pool.id} commissioner={pool.role === "commissioner"} currentUserId={context.userId} members={context.members}/>
+    <WeekAndLineTools poolId={pool.id} week={context.week} schedule={context.schedule}/><AssistedPickForm poolId={pool.id} weekId={context.week?.id} members={active} games={context.games}/><ResultsTools poolId={pool.id} week={context.week} games={context.games}/>{pool.role === "commissioner" && <ResetPoolForm poolId={pool.id}/>}<MemberList poolId={pool.id} commissioner={pool.role === "commissioner"} currentUserId={context.userId} members={context.members}/>
   </section><BottomNav/></main>;
 }
 
