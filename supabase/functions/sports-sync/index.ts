@@ -23,9 +23,11 @@ type RemoteTeam = {
 };
 type OpenWeek = {
   nfl_week: number;
+  season_type: PoolSeasonType;
   seasons: { nfl_season: number; pool_id: string } | null;
 };
-type OpenPoolWeek = { poolId: string; season: number; week: number };
+type PoolSeasonType = "preseason" | "regular" | "postseason";
+type OpenPoolWeek = { poolId: string; season: number; week: number; seasonType: PoolSeasonType };
 type RemoteOdds = {
   game_id: string;
   vendor: string;
@@ -38,6 +40,7 @@ type StoredGame = {
   provider_game_id: string;
   nfl_season: number;
   nfl_week: number;
+  season_type: PoolSeasonType;
   kickoff_at: string;
   home_team_id: string;
   away_team_id: string;
@@ -62,6 +65,7 @@ type LocalGame = {
   provider_game_id: string;
   nfl_season: number;
   nfl_week: number;
+  season_type: PoolSeasonType;
   kickoff_at: string;
   status: "scheduled" | "in_progress";
   manual_override: boolean;
@@ -70,10 +74,11 @@ type SyncMode = "schedule" | "live" | "snapshot";
 type SyncRequest = {
   poolId?: string;
   week?: number;
+  seasonType?: PoolSeasonType;
   source?: string;
   mode?: SyncMode;
 };
-type WeekKey = { season: number; week: number };
+type WeekKey = { season: number; week: number; seasonType: PoolSeasonType };
 type TeamId = { id: string; provider_id: string | null };
 type SyncOutcome = { affected: number; warning?: string; gamesUpdated?: number; oddsLines?: number };
 
@@ -105,7 +110,17 @@ function normalizeStatus(raw: string): "scheduled" | "in_progress" | "final" | "
 }
 
 function uniqueWeeks(weeks: WeekKey[]): WeekKey[] {
-  return [...new Map(weeks.map((week) => [`${week.season}:${week.week}`, week])).values()];
+  return [...new Map(weeks.map((week) => [`${week.season}:${week.seasonType}:${week.week}`, week])).values()];
+}
+
+function balldontlieSeasonType(seasonType: PoolSeasonType): number {
+  return seasonType === "preseason" ? 1 : seasonType === "postseason" ? 3 : 2;
+}
+
+function rundownSportId(seasonType: PoolSeasonType): number {
+  // TheRundown publishes NFL preseason in its dedicated sport feed. Regular
+  // and playoff games are both available from its normal NFL feed.
+  return seasonType === "preseason" ? 25 : 2;
 }
 
 async function providerRequest<T>(providerKey: string, path: string): Promise<T> {
@@ -132,10 +147,10 @@ async function rundownRequest<T>(oddsKey: string, path: string): Promise<T> {
   throw new Error("TheRundown rate limit retry exhausted");
 }
 
-async function getWeekGames(providerKey: string, season: number, week: number): Promise<RemoteGame[]> {
+async function getWeekGames(providerKey: string, season: number, week: number, seasonType: PoolSeasonType): Promise<RemoteGame[]> {
   const result = await providerRequest<{ data: RemoteGame[] }>(
     providerKey,
-    `/games?seasons[]=${season}&weeks[]=${week}&per_page=100`,
+    `/games?seasons[]=${season}&weeks[]=${week}&season_type[]=${balldontlieSeasonType(seasonType)}&per_page=100`,
   );
   const games = result.data ?? [];
   const mismatch = games.find((game) => game.season !== season || game.week !== week);
@@ -202,14 +217,14 @@ function rundownOddsForGame(game: OddsGame, event: RundownEvent): RemoteOdds[] {
 
 async function getGameOdds(oddsKey: string, games: OddsGame[]): Promise<RemoteOdds[]> {
   if (!games.length) return [];
-  const dates = [...new Set(games.map((game) => easternDate(game.kickoff_at)))];
+  const dates = [...new Map(games.map((game) => [`${game.season_type}:${easternDate(game.kickoff_at)}`, { seasonType: game.season_type, date: easternDate(game.kickoff_at) }])).values()];
   const affiliateIds = Object.values(RUNDOWN_AFFILIATES).join(",");
   const events: RundownEvent[] = [];
   for (const [index, date] of dates.entries()) {
     if (index > 0) await new Promise((resolve) => setTimeout(resolve, RUNDOWN_REQUEST_INTERVAL_MS));
     const response = await rundownRequest<{ events?: RundownEvent[] }>(
       oddsKey,
-      `/sports/2/events/${date}?market_ids=2&affiliate_ids=${affiliateIds}&main_line=true&hide_closed=true`,
+      `/sports/${rundownSportId(date.seasonType)}/events/${date.date}?market_ids=2&affiliate_ids=${affiliateIds}&main_line=true&hide_closed=true`,
     );
     events.push(...(response.events ?? []));
   }
@@ -223,18 +238,20 @@ async function getOpenPoolWeeks(
   database: ReturnType<typeof createClient>,
   poolId?: string,
   requestedWeek?: number,
+  requestedSeasonType?: PoolSeasonType,
 ): Promise<OpenPoolWeek[]> {
   let query = database
     .from("weeks")
-    .select("nfl_week,seasons!inner(nfl_season,is_active,pool_id)")
+    .select("nfl_week,season_type,seasons!inner(nfl_season,is_active,pool_id)")
     .eq("seasons.is_active", true)
     .eq("status", "open");
   if (poolId) query = query.eq("seasons.pool_id", poolId);
   if (requestedWeek) query = query.eq("nfl_week", requestedWeek);
+  if (requestedSeasonType) query = query.eq("season_type", requestedSeasonType);
   const { data, error } = await query;
   if (error) throw error;
   return ((data ?? []) as unknown as OpenWeek[]).flatMap((week) =>
-    week.seasons ? [{ poolId: week.seasons.pool_id, season: week.seasons.nfl_season, week: week.nfl_week }] : [],
+    week.seasons ? [{ poolId: week.seasons.pool_id, season: week.seasons.nfl_season, week: week.nfl_week, seasonType: week.season_type }] : [],
   );
 }
 
@@ -338,7 +355,7 @@ async function prefillOdds(
     const line = underdogForOdds(game, oddsLine);
     if (!line) continue;
     usableGameIds.add(game.provider_game_id);
-    const matchingPools = poolWeeks.filter((poolWeek) => poolWeek.season === game.nfl_season && poolWeek.week === game.nfl_week);
+    const matchingPools = poolWeeks.filter((poolWeek) => poolWeek.season === game.nfl_season && poolWeek.week === game.nfl_week && poolWeek.seasonType === game.season_type);
     for (const poolWeek of matchingPools) {
       const { error: lineError } = await database.rpc("prefill_odds_line", {
         p_pool_id: poolWeek.poolId,
@@ -363,17 +380,18 @@ async function storedGamesForPoolWeeks(
   database: ReturnType<typeof createClient>,
   poolWeeks: OpenPoolWeek[],
 ): Promise<OddsGame[]> {
-  const weeks = uniqueWeeks(poolWeeks.map(({ season, week }) => ({ season, week })));
+  const weeks = uniqueWeeks(poolWeeks.map(({ season, week, seasonType }) => ({ season, week, seasonType })));
   if (!weeks.length) return [];
   const { data, error } = await database
     .from("games")
-    .select("id,provider_game_id,nfl_season,nfl_week,kickoff_at,home_team_id,away_team_id")
+    .select("id,provider_game_id,nfl_season,nfl_week,season_type,kickoff_at,home_team_id,away_team_id")
     .eq("provider", PROVIDER)
     .in("nfl_season", [...new Set(weeks.map((week) => week.season))])
-    .in("nfl_week", [...new Set(weeks.map((week) => week.week))]);
+    .in("nfl_week", [...new Set(weeks.map((week) => week.week))])
+    .in("season_type", [...new Set(weeks.map((week) => week.seasonType))]);
   if (error) throw error;
-  const requested = new Set(weeks.map((week) => `${week.season}:${week.week}`));
-  const games = ((data ?? []) as StoredGame[]).filter((game) => requested.has(`${game.nfl_season}:${game.nfl_week}`));
+  const requested = new Set(weeks.map((week) => `${week.season}:${week.seasonType}:${week.week}`));
+  const games = ((data ?? []) as StoredGame[]).filter((game) => requested.has(`${game.nfl_season}:${game.season_type}:${game.nfl_week}`));
   const teamIds = [...new Set(games.flatMap((game) => [game.home_team_id, game.away_team_id]))];
   const { data: teams, error: teamsError } = await database
     .from("teams")
@@ -409,7 +427,7 @@ async function snapshotTuesdayOdds(
     const line = underdogForOdds(game, oddsLine);
     if (!line) continue;
     usableGameIds.add(game.provider_game_id);
-    const matchingPools = poolWeeks.filter((poolWeek) => poolWeek.season === game.nfl_season && poolWeek.week === game.nfl_week);
+    const matchingPools = poolWeeks.filter((poolWeek) => poolWeek.season === game.nfl_season && poolWeek.week === game.nfl_week && poolWeek.seasonType === game.season_type);
     for (const poolWeek of matchingPools) {
       const { data: locked, error } = await database.rpc("snapshot_provider_odds_line", {
         p_pool_id: poolWeek.poolId,
@@ -438,15 +456,19 @@ async function saveSchedule(
   oddsKey: string | undefined,
   poolId?: string,
   requestedWeek?: number,
+  requestedSeasonType?: PoolSeasonType,
 ): Promise<SyncOutcome> {
-  const poolWeeks = await getOpenPoolWeeks(database, poolId, requestedWeek);
-  const weeks = uniqueWeeks(poolWeeks.map(({ season, week }) => ({ season, week })));
+  const poolWeeks = await getOpenPoolWeeks(database, poolId, requestedWeek, requestedSeasonType);
+  const weeks = uniqueWeeks(poolWeeks.map(({ season, week, seasonType }) => ({ season, week, seasonType })));
   if (!weeks.length) return { affected: 0 };
 
   const gamesByWeek = await Promise.all(
-    weeks.map(async (week) => getWeekGames(providerKey, week.season, week.week)),
+    weeks.map(async (week) => getWeekGames(providerKey, week.season, week.week, week.seasonType)),
   );
-  const games = gamesByWeek.flat();
+  const games = gamesByWeek.flatMap((weekGames, index) => weekGames.map((game) => ({
+    ...game,
+    seasonType: weeks[index].seasonType,
+  })));
   const teamMap = await ensureTeams(database, providerKey, games);
   let affected = 0;
 
@@ -470,6 +492,7 @@ async function saveSchedule(
         provider_game_id: String(game.id),
         nfl_season: game.season,
         nfl_week: game.week,
+        season_type: game.seasonType,
         home_team_id: home,
         away_team_id: away,
         kickoff_at: game.date,
@@ -512,7 +535,7 @@ async function syncLiveGames(
 ): Promise<SyncOutcome> {
   const { data, error } = await database
     .from("games")
-    .select("id,provider_game_id,nfl_season,nfl_week,kickoff_at,status,manual_override")
+    .select("id,provider_game_id,nfl_season,nfl_week,season_type,kickoff_at,status,manual_override")
     .eq("provider", PROVIDER)
     .eq("manual_override", false)
     .in("status", ["scheduled", "in_progress"]);
@@ -522,8 +545,8 @@ async function syncLiveGames(
 
   const candidateIds = new Set(candidates.map((game) => game.provider_game_id));
   const localGames = new Map(candidates.map((game) => [game.provider_game_id, game]));
-  const weeks = uniqueWeeks(candidates.map((game) => ({ season: game.nfl_season, week: game.nfl_week })));
-  const gameLists = await Promise.all(weeks.map((week) => getWeekGames(providerKey, week.season, week.week)));
+  const weeks = uniqueWeeks(candidates.map((game) => ({ season: game.nfl_season, week: game.nfl_week, seasonType: game.season_type })));
+  const gameLists = await Promise.all(weeks.map((week) => getWeekGames(providerKey, week.season, week.week, week.seasonType)));
   let affected = 0;
 
   for (const remote of gameLists.flat()) {
@@ -626,7 +649,7 @@ Deno.serve(async (request) => {
 
   try {
     const outcome = mode === "schedule"
-      ? await saveSchedule(database, providerKey, oddsKey, commissionerRequest ? payload.poolId : undefined, commissionerRequest ? payload.week : undefined)
+      ? await saveSchedule(database, providerKey, oddsKey, commissionerRequest ? payload.poolId : undefined, commissionerRequest ? payload.week : undefined, commissionerRequest ? payload.seasonType : undefined)
       : mode === "snapshot"
         ? await snapshotTuesdayOdds(database, oddsKey)
         : await syncLiveGames(database, providerKey);

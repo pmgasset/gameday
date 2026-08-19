@@ -3,14 +3,17 @@
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import { CalendarCheck2, CheckCircle2, Eye, LockKeyhole, ShieldCheck } from "lucide-react";
 import { useState, type ReactNode } from "react";
+import { useSearchParams } from "next/navigation";
 import { submitPick } from "@/app/actions/pool";
 import type { LiveGame, LivePick } from "@/lib/data/pool";
 import { effectivePickDeadline, formatEastern, type NflWeekWindow } from "@/lib/domain/deadlines";
 import { Button, Card, Pill } from "./ui";
 import { TeamLogo } from "./team-logo";
 
-export function PickFlow({ poolId, weekId, weekNumber, weekWindow, games, currentPick, saved, error }: { poolId: string; weekId: string; weekNumber: number; weekWindow: NflWeekWindow | null; games: LiveGame[]; currentPick: LivePick | undefined; saved: boolean; error?: string }) {
+export function PickFlow({ poolId, weekId, weekNumber, seasonType = "regular", weekWindow, games, currentPick, saved, error }: { poolId: string; weekId: string; weekNumber: number; seasonType?: "preseason" | "regular" | "postseason"; weekWindow: NflWeekWindow | null; games: LiveGame[]; currentPick: LivePick | undefined; saved: boolean; error?: string }) {
   const [candidate, setCandidate] = useState<LiveGame | null>(null);
+  const querySeasonType = useSearchParams().get("seasonType");
+  const selectedSeasonType = querySeasonType === "preseason" || querySeasonType === "postseason" ? querySeasonType : seasonType;
   const pickedGame = games.find((game) => game.id === currentPick?.gameId);
   // Every game of the official NFL week shares one open time and one Sunday cutoff.
   const sundayCutoff = weekWindow ? new Date(weekWindow.globalDeadline) : null;
@@ -42,6 +45,7 @@ export function PickFlow({ poolId, weekId, weekNumber, weekWindow, games, curren
             <input type="hidden" name="poolId" value={poolId}/>
             <input type="hidden" name="weekId" value={weekId}/>
             <input type="hidden" name="week" value={weekNumber}/>
+            <input type="hidden" name="seasonType" value={selectedSeasonType}/>
             <input type="hidden" name="gameId" value={candidate?.id ?? ""}/>
             <input type="hidden" name="teamId" value={candidate?.underdog.id ?? ""}/>
             <Button type="submit"><ShieldCheck size={16} className="mr-2"/>Confirm pick</Button>

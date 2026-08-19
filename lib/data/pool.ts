@@ -4,7 +4,8 @@ import type { Role } from "@/lib/domain/types";
 import { serverClient } from "@/lib/supabase/server";
 
 type MemberRow = { pool_id: string; role: Role; status: string; pick_blocked_at: string | null; pools: { name: string } | null };
-type WeekRow = { id: string; nfl_week: number; status: "draft" | "open" | "complete" };
+export type PoolSeasonType = "preseason" | "regular" | "postseason";
+type WeekRow = { id: string; nfl_week: number; season_type: PoolSeasonType; status: "draft" | "open" | "complete" };
 type LineRow = { game_id: string; underdog_team_id: string; favorite_team_id: string; underdog_spread: number | string; source: string | null; manual_override: boolean };
 type GameRow = { id: string; kickoff_at: string; status: "scheduled" | "in_progress" | "final" | "postponed" | "cancelled"; home_team_id: string; away_team_id: string; home_score: number | null; away_score: number | null; period: string | null; game_clock: string | null; manual_override: boolean };
 type TeamRow = { id: string; abbreviation: string; city: string; name: string };
@@ -22,7 +23,7 @@ export type PoolContext = { userId: string; displayName: string; pool: ActivePoo
 
 export function supabaseConfigured(): boolean { return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY); }
 
-export async function requirePoolContext(selectedWeek?: number): Promise<PoolContext> {
+export async function requirePoolContext(selectedWeek?: number, selectedSeasonType?: PoolSeasonType): Promise<PoolContext> {
   if (!supabaseConfigured()) redirect("/login?error=unavailable");
   const db = await serverClient();
   const { data: { user } } = await db.auth.getUser();
@@ -35,13 +36,15 @@ export async function requirePoolContext(selectedWeek?: number): Promise<PoolCon
   const pool = { id: active.pool_id, name: active.pools?.name ?? "GameDay Pool", role: active.role };
   const { data: seasons } = await db.from("seasons").select("id,nfl_season").eq("pool_id", pool.id).eq("is_active", true).limit(1);
   const season = (seasons ?? []) as Array<{ id: string; nfl_season: number }>;
-  const { data: weekData } = season[0] ? await db.from("weeks").select("id,nfl_week,status").eq("season_id", season[0].id).order("nfl_week", { ascending: true }) : { data: [] };
+  const { data: weekData } = season[0] ? await db.from("weeks").select("id,nfl_week,season_type,status").eq("season_id", season[0].id).order("nfl_week", { ascending: true }) : { data: [] };
   const weeks = (weekData ?? []) as WeekRow[];
+  const phaseOrder: Record<PoolSeasonType, number> = { preseason: 0, regular: 1, postseason: 2 };
+  weeks.sort((a,b) => phaseOrder[a.season_type] - phaseOrder[b.season_type] || a.nfl_week - b.nfl_week);
   const defaultWeek = weeks.find((item) => item.status !== "complete") ?? weeks.at(-1) ?? null;
-  const week = weeks.find((item) => item.nfl_week === selectedWeek) ?? defaultWeek;
+  const week = weeks.find((item) => item.nfl_week === selectedWeek && (!selectedSeasonType || item.season_type === selectedSeasonType)) ?? defaultWeek;
   const { data: lineData } = await db.from("pool_game_lines").select("game_id,underdog_team_id,favorite_team_id,underdog_spread,source,manual_override").eq("pool_id", pool.id);
   const lines = (lineData ?? []) as unknown as LineRow[];
-  const { data: gameData } = week && season[0] ? await db.from("games").select("id,kickoff_at,status,home_team_id,away_team_id,home_score,away_score,period,game_clock,manual_override").eq("nfl_season", season[0].nfl_season).eq("nfl_week", week.nfl_week) : { data: [] };
+  const { data: gameData } = week && season[0] ? await db.from("games").select("id,kickoff_at,status,home_team_id,away_team_id,home_score,away_score,period,game_clock,manual_override").eq("nfl_season", season[0].nfl_season).eq("nfl_week", week.nfl_week).eq("season_type", week.season_type) : { data: [] };
   const gameRows = (gameData ?? []) as unknown as GameRow[];
   const teamIds = [...new Set([...gameRows.map((game) => game.home_team_id), ...gameRows.map((game) => game.away_team_id)])];
   const { data: teamData } = teamIds.length ? await db.from("teams").select("id,abbreviation,city,name").in("id", teamIds) : { data: [] };

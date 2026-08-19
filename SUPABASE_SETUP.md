@@ -33,6 +33,7 @@ If you do not have terminal access, open **SQL Editor → New query** in the Sup
 12. `supabase/migrations/0012_temporary_pick_blocks.sql`
 13. `supabase/migrations/0013_week_participation_and_member_exit.sql`
 14. `supabase/migrations/0014_official_nfl_week_calendar.sql`
+15. `supabase/migrations/0015_preseason_pool_weeks.sql`
 
 Do not run either file against a shared project that already has GameDay-named tables or an unrelated `public.profiles` signup trigger.
 
@@ -63,6 +64,10 @@ With no terminal access, deploy `sports-sync` via **Edge Functions → Deploy a 
 When a Commissioner opens a week, GameDay immediately asks the secured Edge Function to import and save the matching BALLDONTLIE teams and games. The scheduled job later reconciles schedule changes and keeps live scores current without repeatedly re-importing the full schedule. The commissioner reviews each imported matchup and can enter or edit its underdog/spread—no team abbreviations or kickoff times are needed. If the provider is unavailable, the existing manual game-line form remains available as a fallback. Migration `0004` enables Realtime only for `games`; `picks` are intentionally excluded to prevent hidden-pick leakage. Apply migration `0006` as well; it grants schedule visibility only to pool admins before a line is created.
 
 TheRundown pre-fills each eligible underdog/spread using DraftKings first, then FanDuel and BetMGM when DraftKings is unavailable. Its free plan is limited to one request per second, so GameDay requests each NFL game date sequentially and retries a short-lived `429` automatically. After applying migration `0010`, the Tuesday 9:00 AM Eastern snapshot uses DraftKings only, records TheRundown's price timestamp, and prevents later provider refreshes from changing the line. Commissioner edits remain manual overrides. Deploy the updated `sports-sync` function after the database migration, then re-run `supabase/cron.sql`. Odds retrieval failures are retained as warnings in `provider_syncs`.
+
+## Preseason pools
+
+Commissioners can create **Preseason Weeks 1–4** from the Commissioner dashboard. Preseason is stored separately from the identically numbered regular-season week, uses BALLDONTLIE's preseason schedule filter, and requests odds from TheRundown's dedicated NFL Preseason feed. Apply migration `0015` before deploying the updated `sports-sync` function. Preseason odds are requested only when that preseason week is opened or refreshed, so setting up the option does not add ongoing API calls.
 
 Verify a Tuesday snapshot with:
 

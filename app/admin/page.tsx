@@ -11,20 +11,20 @@ import { Button, Card, Pill } from "@/components/ui";
 import { requirePoolContext, type LiveGame, type PoolMember, type ScheduledGame } from "@/lib/data/pool";
 import { formatEastern } from "@/lib/domain/deadlines";
 
-export default async function AdminPage({ searchParams }: { searchParams: Promise<{ assisted?: string; error?: string; finalized?: string; imported?: string; memberBlock?: string; memberNote?: string; reset?: string; gamesUpdated?: string; oddsLines?: string; syncWarning?: string; setup?: string; week?: string }> }) {
+export default async function AdminPage({ searchParams }: { searchParams: Promise<{ assisted?: string; error?: string; finalized?: string; imported?: string; memberBlock?: string; memberNote?: string; reset?: string; gamesUpdated?: string; oddsLines?: string; syncWarning?: string; setup?: string; week?: string; seasonType?: "preseason" | "regular" | "postseason" }> }) {
   const params = await searchParams;
   const selectedWeek = Number(params.week);
-  const context = await requirePoolContext(Number.isInteger(selectedWeek) ? selectedWeek : undefined);
+  const context = await requirePoolContext(Number.isInteger(selectedWeek) ? selectedWeek : undefined, params.seasonType);
   const pool = context.pool;
-  if (!pool) return <main className="min-h-screen"><Header weekNumber={context.week?.nfl_week} weeks={context.weeks}/><Onboarding pending={context.pendingPool}/><BottomNav/></main>;
-  if (pool.role !== "commissioner" && pool.role !== "co_commissioner") return <main className="min-h-screen"><Header weekNumber={context.week?.nfl_week} weeks={context.weeks}/><section className="mx-auto max-w-xl px-5 pt-16"><h1 className="text-3xl font-black">Commissioner access required</h1></section><BottomNav/></main>;
+  if (!pool) return <main className="min-h-screen"><Header weekNumber={context.week?.nfl_week} seasonType={context.week?.season_type} weeks={context.weeks}/><Onboarding pending={context.pendingPool}/><BottomNav/></main>;
+  if (pool.role !== "commissioner" && pool.role !== "co_commissioner") return <main className="min-h-screen"><Header weekNumber={context.week?.nfl_week} seasonType={context.week?.season_type} weeks={context.weeks}/><section className="mx-auto max-w-xl px-5 pt-16"><h1 className="text-3xl font-black">Commissioner access required</h1></section><BottomNav/></main>;
 
   const active = context.members.filter((member) => member.status === "active");
   const pending = context.members.filter((member) => member.status === "pending");
   const setupIncomplete = !context.week || !context.schedule.length || context.schedule.some((game) => !game.hasLine);
   const stats = [[String(active.length), "Active players", Users], [String(context.picks.length), "Picks submitted", ClipboardCheck], [String(pending.length), "Pending members", UserPlus], [context.lastSync ? "Live" : "Waiting", "NFL data", Activity]];
 
-  return <main className="mx-auto min-h-screen max-w-5xl pb-24"><Header weekNumber={context.week?.nfl_week} weeks={context.weeks}/><section className="px-5 pt-6">
+  return <main className="mx-auto min-h-screen max-w-5xl pb-24"><Header weekNumber={context.week?.nfl_week} seasonType={context.week?.season_type} weeks={context.weeks}/><section className="px-5 pt-6">
     <Pill className="border-[hsl(var(--primary)/.4)] text-[hsl(var(--primary))]">Commissioner area</Pill>
     <div className="mt-3 flex flex-wrap items-center justify-between gap-3"><h1 className="text-3xl font-black">Run Week {context.week?.nfl_week ?? "—"}</h1>{!setupIncomplete && <Link className="inline-flex" href={`/admin?setup=1&week=${context.week?.nfl_week ?? ""}`}><Button className="bg-white/10 text-white hover:bg-white/15">Open setup guide</Button></Link>}</div>
     {params.error && <Card className="mt-5 border-red-500/40 p-4 text-sm text-red-200">{params.error}</Card>}
@@ -40,8 +40,12 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
     <CommissionerSection title="Pool setup" description="Invitations and data connection" icon={Settings2}>
       <div className="grid gap-4 md:grid-cols-2"><InvitationForm poolId={pool.id}/><Card className="p-5"><p className="eyebrow">NFL data</p><p className="mt-2 text-xl font-black text-[hsl(var(--primary))]">{context.lastSync ? "Connected" : "Awaiting sync"}</p><p className="mt-2 text-sm text-[hsl(var(--muted))]">{context.lastSync ? `Last successful sync: ${new Date(context.lastSync).toLocaleString()}` : "Deploy and schedule the Supabase sports-sync function."}</p></Card></div>
     </CommissionerSection>
-    <WeekAndLineTools poolId={pool.id} week={context.week} schedule={context.schedule}/><AssistedPickForm poolId={pool.id} weekId={context.week?.id} members={active} games={context.games}/><ResultsTools poolId={pool.id} week={context.week} games={context.games}/><MemberList poolId={pool.id} commissioner={pool.role === "commissioner"} currentUserId={context.userId} members={context.members} notes={context.memberNotes}/>{pool.role === "commissioner" && <CommissionerSection title="Pool reset" description="Remove gameplay data while retaining members" icon={Settings2}><ResetPoolForm poolId={pool.id}/></CommissionerSection>}
+    <SeasonWeekSetup poolId={pool.id} week={context.week}/><WeekAndLineTools poolId={pool.id} week={context.week} schedule={context.schedule}/><AssistedPickForm poolId={pool.id} weekId={context.week?.id} members={active} games={context.games}/><ResultsTools poolId={pool.id} week={context.week} games={context.games}/><MemberList poolId={pool.id} commissioner={pool.role === "commissioner"} currentUserId={context.userId} members={context.members} notes={context.memberNotes}/>{pool.role === "commissioner" && <CommissionerSection title="Pool reset" description="Remove gameplay data while retaining members" icon={Settings2}><ResetPoolForm poolId={pool.id}/></CommissionerSection>}
   </section><BottomNav/></main>;
+}
+
+function SeasonWeekSetup({ poolId, week }: { poolId: string; week: { nfl_week: number; season_type: "preseason" | "regular" | "postseason" } | null }) {
+  return <CommissionerSection title="Start a preseason or regular week" description="Each phase has its own official schedule and odds feed" icon={CalendarDays}><form action={openWeek} className="grid gap-3 sm:grid-cols-[11rem_8rem_auto]"><input type="hidden" name="poolId" value={poolId}/><select aria-label="Season phase" className="focus-ring min-h-11 rounded-xl border bg-black/20 px-3 text-sm" defaultValue="regular" name="seasonType"><option value="preseason">Preseason</option><option value="regular">Regular season</option><option value="postseason">Postseason</option></select><input className="focus-ring min-h-11 rounded-xl border bg-black/20 px-3 text-sm" defaultValue="1" min="1" name="week" required type="number"/><Button type="submit">Create & import</Button></form>{week && <form action={importSchedule} className="mt-3"><input type="hidden" name="poolId" value={poolId}/><input type="hidden" name="week" value={week.nfl_week}/><input type="hidden" name="seasonType" value={week.season_type}/><Button className="bg-white/10 text-white hover:bg-white/15" type="submit">Refresh this {week.season_type === "preseason" ? "preseason " : ""}week&apos;s official data</Button></form>}<p className="mt-3 text-xs text-[hsl(var(--muted))]">Preseason supports Weeks 1–4. Its games and lines stay separate from the same-numbered regular-season week.</p></CommissionerSection>;
 }
 
 function CommissionerSection({ title, description, icon: Icon, open = false, children }: { title: string; description: string; icon: typeof CalendarDays; open?: boolean; children: ReactNode }) {
