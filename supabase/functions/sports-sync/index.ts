@@ -27,7 +27,7 @@ type OpenWeek = {
 };
 type OpenPoolWeek = { poolId: string; season: number; week: number };
 type RemoteOdds = {
-  game_id: number;
+  game_id: string;
   vendor: string;
   spread_home_value: string | number | null;
   spread_away_value: string | number | null;
@@ -38,8 +38,24 @@ type StoredGame = {
   provider_game_id: string;
   nfl_season: number;
   nfl_week: number;
+  kickoff_at: string;
   home_team_id: string;
   away_team_id: string;
+};
+type OddsGame = StoredGame & {
+  homeTeam: { abbreviation: string; city: string; name: string };
+  awayTeam: { abbreviation: string; city: string; name: string };
+};
+type RundownEvent = {
+  teams: Array<{ name: string; mascot?: string; abbreviation?: string; is_away?: boolean; is_home?: boolean }>;
+  markets?: Array<{
+    market_id: number;
+    period_id: number;
+    participants: Array<{
+      name: string;
+      lines: Array<{ value: string | number | null; prices: Record<string, { updated_at?: string }> }>;
+    }>;
+  }>;
 };
 type LocalGame = {
   id: string;
@@ -63,6 +79,13 @@ type SyncOutcome = { affected: number; warning?: string; gamesUpdated?: number; 
 
 const PROVIDER = "balldontlie";
 const PROVIDER_BASE_URL = "https://api.balldontlie.io/nfl/v1";
+const ODDS_PROVIDER = "therundown";
+const RUNDOWN_BASE_URL = "https://therundown.io/api/v2";
+const RUNDOWN_AFFILIATES: Record<string, string> = {
+  draftkings: "19",
+  fanduel: "23",
+  betmgm: "22",
+};
 const LIVE_LOOKAHEAD_MS = 15 * 60 * 1000;
 const LIVE_LOOKBACK_MS = 12 * 60 * 60 * 1000;
 
@@ -92,6 +115,17 @@ async function providerRequest<T>(providerKey: string, path: string): Promise<T>
   return response.json() as Promise<T>;
 }
 
+async function rundownRequest<T>(oddsKey: string, path: string): Promise<T> {
+  const response = await fetch(`${RUNDOWN_BASE_URL}${path}`, {
+    headers: { "X-TheRundown-Key": oddsKey },
+  });
+  if (!response.ok) {
+    const detail = (await response.text()).replace(/\s+/g, " ").slice(0, 180);
+    throw new Error(`TheRundown ${response.status}${detail ? `: ${detail}` : ""}`);
+  }
+  return response.json() as Promise<T>;
+}
+
 async function getWeekGames(providerKey: string, season: number, week: number): Promise<RemoteGame[]> {
   const result = await providerRequest<{ data: RemoteGame[] }>(
     providerKey,
@@ -107,15 +141,72 @@ async function getWeekGames(providerKey: string, season: number, week: number): 
   return games;
 }
 
-async function getGameOdds(providerKey: string, gameIds: string[]): Promise<RemoteOdds[]> {
-  if (!gameIds.length) return [];
-  const batches = Array.from({ length: Math.ceil(gameIds.length / 100) }, (_, index) => gameIds.slice(index * 100, index * 100 + 100));
-  const results = await Promise.all(batches.map(async (batch) => {
-    const query = new URLSearchParams({ per_page: "100" });
-    for (const gameId of batch) query.append("game_ids[]", gameId);
-    return providerRequest<{ data: RemoteOdds[] }>(providerKey, `/odds?${query}`);
-  }));
-  return results.flatMap((result) => result.data ?? []);
+function easternDate(value: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(value));
+  const part = (type: string) => parts.find((item) => item.type === type)?.value;
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+function normalized(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function matchesRundownTeam(team: OddsGame["homeTeam"], remote: RundownEvent["teams"][number]): boolean {
+  const localName = normalized(`${team.city} ${team.name}`);
+  const remoteName = normalized(remote.name);
+  return normalized(team.abbreviation) === normalized(remote.abbreviation ?? "")
+    || localName === remoteName
+    || remoteName.endsWith(normalized(team.name));
+}
+
+function rundownOddsForGame(game: OddsGame, event: RundownEvent): RemoteOdds[] {
+  const away = event.teams.find((team) => team.is_away || matchesRundownTeam(game.awayTeam, team));
+  const home = event.teams.find((team) => team.is_home || matchesRundownTeam(game.homeTeam, team));
+  if (!away || !home || !matchesRundownTeam(game.awayTeam, away) || !matchesRundownTeam(game.homeTeam, home)) return [];
+  const spread = event.markets?.find((market) => market.market_id === 2 && market.period_id === 0);
+  if (!spread) return [];
+  const linesForTeam = (remote: RundownEvent["teams"][number], local: OddsGame["homeTeam"]) => spread.participants.find((participant) => {
+    const participantName = normalized(participant.name);
+    return participantName === normalized(remote.name) || participantName.endsWith(normalized(local.name));
+  })?.lines ?? [];
+  const awayLines = linesForTeam(away, game.awayTeam);
+  const homeLines = linesForTeam(home, game.homeTeam);
+
+  return Object.entries(RUNDOWN_AFFILIATES).flatMap(([vendor, affiliateId]) => {
+    const awayLine = awayLines.find((line) => line.prices?.[affiliateId]);
+    const homeLine = homeLines.find((line) => line.prices?.[affiliateId]);
+    if (!awayLine || !homeLine) return [];
+    const updatedAt = [awayLine.prices[affiliateId]?.updated_at, homeLine.prices[affiliateId]?.updated_at]
+      .filter((value): value is string => Boolean(value))
+      .sort();
+    return [{
+      game_id: game.provider_game_id,
+      vendor,
+      spread_home_value: homeLine.value,
+      spread_away_value: awayLine.value,
+      updated_at: updatedAt[updatedAt.length - 1],
+    }];
+  });
+}
+
+async function getGameOdds(oddsKey: string, games: OddsGame[]): Promise<RemoteOdds[]> {
+  if (!games.length) return [];
+  const dates = [...new Set(games.map((game) => easternDate(game.kickoff_at)))];
+  const affiliateIds = Object.values(RUNDOWN_AFFILIATES).join(",");
+  const responses = await Promise.all(dates.map((date) => rundownRequest<{ events?: RundownEvent[] }>(
+    oddsKey,
+    `/sports/2/events/${date}?market_ids=2&affiliate_ids=${affiliateIds}&main_line=true&hide_closed=true`,
+  )));
+  const events = responses.flatMap((response) => response.events ?? []);
+  return games.flatMap((game) => {
+    const event = events.find((candidate) => rundownOddsForGame(game, candidate).length > 0);
+    return event ? rundownOddsForGame(game, event) : [];
+  });
 }
 
 async function getOpenPoolWeeks(
@@ -190,7 +281,7 @@ function selectedOdds(odds: RemoteOdds[], allowedVendors?: string[]): RemoteOdds
     if (normalized === "betmgm") return 2;
     return 3;
   };
-  const selected = new Map<number, RemoteOdds>();
+  const selected = new Map<string, RemoteOdds>();
   for (const line of odds) {
     if (allowedVendors && !allowedVendors.includes(line.vendor.toLowerCase())) continue;
     const current = selected.get(line.game_id);
@@ -213,19 +304,20 @@ function underdogForOdds(game: StoredGame, odds: RemoteOdds): { teamId: string; 
 
 async function prefillOdds(
   database: ReturnType<typeof createClient>,
-  providerKey: string,
+  oddsKey: string | undefined,
   poolWeeks: OpenPoolWeek[],
 ): Promise<SyncOutcome> {
   const games = await storedGamesForPoolWeeks(database, poolWeeks);
   if (!games.length) return { affected: 0 };
+  if (!oddsKey) return { affected: 0, warning: "TheRundown odds prefill skipped: THERUNDOWN_API_KEY is not configured." };
   let odds: RemoteOdds[];
   try {
-    odds = await getGameOdds(providerKey, games.map((game) => game.provider_game_id));
+    odds = await getGameOdds(oddsKey, games);
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : "Unknown odds error";
     // The schedule remains useful when odds coverage is unavailable, but the
     // audit row makes an access failure visible to commissioners.
-    return { affected: 0, warning: `BALLDONTLIE odds prefill failed: ${message}` };
+    return { affected: 0, warning: `TheRundown odds prefill failed: ${message}` };
   }
   const gamesByProviderId = new Map(games.map((game) => [game.provider_game_id, game]));
   const usableGameIds = new Set<string>();
@@ -243,7 +335,7 @@ async function prefillOdds(
         p_game_id: game.id,
         p_underdog_team_id: line.teamId,
         p_spread: line.spread,
-        p_source: `balldontlie:${oddsLine.vendor}`,
+        p_source: `${ODDS_PROVIDER}:${oddsLine.vendor}`,
       });
       if (lineError) throw lineError;
       affected++;
@@ -253,36 +345,49 @@ async function prefillOdds(
   return {
     affected,
     oddsLines: affected,
-    warning: missing ? `BALLDONTLIE returned no usable underdog spread for ${missing} imported game${missing === 1 ? "" : "s"}.` : undefined,
+    warning: missing ? `TheRundown returned no usable underdog spread for ${missing} imported game${missing === 1 ? "" : "s"}.` : undefined,
   };
 }
 
 async function storedGamesForPoolWeeks(
   database: ReturnType<typeof createClient>,
   poolWeeks: OpenPoolWeek[],
-): Promise<StoredGame[]> {
+): Promise<OddsGame[]> {
   const weeks = uniqueWeeks(poolWeeks.map(({ season, week }) => ({ season, week })));
   if (!weeks.length) return [];
   const { data, error } = await database
     .from("games")
-    .select("id,provider_game_id,nfl_season,nfl_week,home_team_id,away_team_id")
+    .select("id,provider_game_id,nfl_season,nfl_week,kickoff_at,home_team_id,away_team_id")
     .eq("provider", PROVIDER)
     .in("nfl_season", [...new Set(weeks.map((week) => week.season))])
     .in("nfl_week", [...new Set(weeks.map((week) => week.week))]);
   if (error) throw error;
   const requested = new Set(weeks.map((week) => `${week.season}:${week.week}`));
-  return ((data ?? []) as StoredGame[]).filter((game) => requested.has(`${game.nfl_season}:${game.nfl_week}`));
+  const games = ((data ?? []) as StoredGame[]).filter((game) => requested.has(`${game.nfl_season}:${game.nfl_week}`));
+  const teamIds = [...new Set(games.flatMap((game) => [game.home_team_id, game.away_team_id]))];
+  const { data: teams, error: teamsError } = await database
+    .from("teams")
+    .select("id,abbreviation,city,name")
+    .in("id", teamIds);
+  if (teamsError) throw teamsError;
+  const teamMap = new Map(((teams ?? []) as Array<{ id: string; abbreviation: string; city: string; name: string }>).map((team) => [team.id, team]));
+  return games.flatMap((game) => {
+    const homeTeam = teamMap.get(game.home_team_id);
+    const awayTeam = teamMap.get(game.away_team_id);
+    return homeTeam && awayTeam ? [{ ...game, homeTeam, awayTeam }] : [];
+  });
 }
 
 async function snapshotTuesdayOdds(
   database: ReturnType<typeof createClient>,
-  providerKey: string,
+  oddsKey: string | undefined,
 ): Promise<SyncOutcome> {
   const poolWeeks = await getOpenPoolWeeks(database);
   const games = await storedGamesForPoolWeeks(database, poolWeeks);
   if (!games.length) return { affected: 0, warning: "Tuesday odds snapshot skipped: no imported games in an open pool week." };
 
-  const odds = await getGameOdds(providerKey, games.map((game) => game.provider_game_id));
+  if (!oddsKey) throw new Error("THERUNDOWN_API_KEY is not configured");
+  const odds = await getGameOdds(oddsKey, games);
   const gamesByProviderId = new Map(games.map((game) => [game.provider_game_id, game]));
   const draftKingsOdds = selectedOdds(odds, ["draftkings"]);
   const usableGameIds = new Set<string>();
@@ -301,7 +406,7 @@ async function snapshotTuesdayOdds(
         p_game_id: game.id,
         p_underdog_team_id: line.teamId,
         p_spread: line.spread,
-        p_source: "balldontlie:draftkings",
+        p_source: "therundown:draftkings",
         p_provider_odds_updated_at: oddsLine.updated_at ?? null,
       });
       if (error) throw error;
@@ -313,13 +418,14 @@ async function snapshotTuesdayOdds(
   return {
     affected,
     oddsLines: affected,
-    warning: missing ? `Tuesday odds snapshot missing usable DraftKings spreads for ${missing} imported game${missing === 1 ? "" : "s"}.` : undefined,
+    warning: missing ? `Tuesday odds snapshot missing usable TheRundown DraftKings spreads for ${missing} imported game${missing === 1 ? "" : "s"}.` : undefined,
   };
 }
 
 async function saveSchedule(
   database: ReturnType<typeof createClient>,
   providerKey: string,
+  oddsKey: string | undefined,
   poolId?: string,
   requestedWeek?: number,
 ): Promise<SyncOutcome> {
@@ -373,7 +479,7 @@ async function saveSchedule(
     }
     affected++;
   }
-  const odds = await prefillOdds(database, providerKey, poolWeeks);
+  const odds = await prefillOdds(database, oddsKey, poolWeeks);
   const { data: finalized, error: finalizeError } = await database.rpc("finalize_ready_pool_weeks");
   if (finalizeError) throw finalizeError;
   return {
@@ -484,6 +590,7 @@ Deno.serve(async (request) => {
   const payload = await request.json().catch(() => ({})) as SyncRequest;
   const scheduledRequest = request.headers.get("apikey") === serviceKey;
   const providerKey = Deno.env.get("BALLDONTLIE_API_KEY");
+  const oddsKey = Deno.env.get("THERUNDOWN_API_KEY");
   if (!providerKey) return Response.json({ error: "Provider not configured" }, { status: 503 });
   const database = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -509,9 +616,9 @@ Deno.serve(async (request) => {
 
   try {
     const outcome = mode === "schedule"
-      ? await saveSchedule(database, providerKey, commissionerRequest ? payload.poolId : undefined, commissionerRequest ? payload.week : undefined)
+      ? await saveSchedule(database, providerKey, oddsKey, commissionerRequest ? payload.poolId : undefined, commissionerRequest ? payload.week : undefined)
       : mode === "snapshot"
-        ? await snapshotTuesdayOdds(database, providerKey)
+        ? await snapshotTuesdayOdds(database, oddsKey)
         : await syncLiveGames(database, providerKey);
     await database
       .from("provider_syncs")

@@ -38,10 +38,10 @@ Enable Realtime publication for `games` after testing privacy. Do not publish `p
 
 ## Scheduled NFL sync
 
-The scheduler is hosted by Supabase, not Vercel. First set the BALLDONTLIE credential and deploy the Edge Function:
+The scheduler is hosted by Supabase, not Vercel. BALLDONTLIE supplies the NFL schedule and live scores; TheRundown supplies the pregame spreads. Set both credentials and deploy the Edge Function:
 
 ```bash
-supabase secrets set BALLDONTLIE_API_KEY=YOUR_KEY
+supabase secrets set BALLDONTLIE_API_KEY=YOUR_KEY THERUNDOWN_API_KEY=YOUR_KEY
 supabase functions deploy sports-sync
 ```
 
@@ -54,11 +54,11 @@ select vault.create_secret('YOUR_SUPABASE_SECRET_KEY', 'gameday_function_key');
 
 Finally run [`supabase/cron.sql`](supabase/cron.sql) in the SQL Editor. It installs an eight-times-daily schedule refresh and a five-minute live-score job; the live job makes provider calls only around kickoff or while a game is in progress. It is safe to re-run because it removes the existing named jobs first. Inspect runs in Supabase Dashboard → Integrations → Cron. The Edge Function validates the Vault-held key before it performs privileged database work.
 
-With no terminal access, deploy `sports-sync` via **Edge Functions → Deploy a new function → Via Editor**. Use the source at `supabase/functions/sports-sync/index.ts`, turn off **Verify JWT**, then add `BALLDONTLIE_API_KEY` under Edge Function Secrets. The Vault and scheduler statements still run in SQL Editor.
+With no terminal access, deploy `sports-sync` via **Edge Functions → Deploy a new function → Via Editor**. Use the source at `supabase/functions/sports-sync/index.ts`, turn off **Verify JWT**, then add both `BALLDONTLIE_API_KEY` and `THERUNDOWN_API_KEY` under Edge Function Secrets. The Vault and scheduler statements still run in SQL Editor.
 
 When a Commissioner opens a week, GameDay immediately asks the secured Edge Function to import and save the matching BALLDONTLIE teams and games. The scheduled job later reconciles schedule changes and keeps live scores current without repeatedly re-importing the full schedule. The commissioner reviews each imported matchup and can enter or edit its underdog/spread—no team abbreviations or kickoff times are needed. If the provider is unavailable, the existing manual game-line form remains available as a fallback. Migration `0004` enables Realtime only for `games`; `picks` are intentionally excluded to prevent hidden-pick leakage. Apply migration `0006` as well; it grants schedule visibility only to pool admins before a line is created.
 
-After applying migration `0010`, the sync continues to pre-fill eligible lines between imports, then takes one official Tuesday snapshot at 9:00 AM Eastern. The snapshot uses DraftKings only, records BALLDONTLIE's odds timestamp, and prevents later provider refreshes from changing the line. Commissioner edits remain manual overrides. Deploy the updated `sports-sync` function after the database migration, then re-run `supabase/cron.sql`; no additional secret is required. Odds retrieval failures are retained as warnings in `provider_syncs`.
+TheRundown pre-fills each eligible underdog/spread using DraftKings first, then FanDuel and BetMGM when DraftKings is unavailable. After applying migration `0010`, the Tuesday 9:00 AM Eastern snapshot uses DraftKings only, records TheRundown's price timestamp, and prevents later provider refreshes from changing the line. Commissioner edits remain manual overrides. Deploy the updated `sports-sync` function after the database migration, then re-run `supabase/cron.sql`. Odds retrieval failures are retained as warnings in `provider_syncs`.
 
 Verify a Tuesday snapshot with:
 

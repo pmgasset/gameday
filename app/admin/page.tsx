@@ -44,7 +44,7 @@ function WeekAndLineTools({ poolId, week, schedule }: { poolId: string; week: { 
 }
 
 function ScheduledLineForm({ poolId, weekId, game }: { poolId: string; weekId: string; game: ScheduledGame }) {
-  const source = game.lineSource?.replace("balldontlie:", "BALLDONTLIE · ");
+  const source = game.lineSource?.replace("balldontlie:", "BALLDONTLIE · ").replace("therundown:", "TheRundown · ");
   return <form action={saveScheduledLine} className="grid items-center gap-3 rounded-xl border border-white/10 bg-black/10 p-3 md:grid-cols-[minmax(0,1fr)_11rem_8rem_auto]"><input type="hidden" name="poolId" value={poolId}/><input type="hidden" name="weekId" value={weekId}/><input type="hidden" name="gameId" value={game.id}/><div><p className="font-bold">{game.away.name} at {game.home.name}</p><p className="text-xs text-[hsl(var(--muted))]">{formatEastern(game.kickoff)}{source ? ` · ${game.lineManuallyOverridden ? "Edited" : source}` : ""}</p></div><select name="underdogTeamId" defaultValue={game.underdogTeamId ?? ""} required className="focus-ring min-h-11 rounded-xl border bg-black/20 px-3 text-sm"><option value="" disabled>Choose underdog</option><option value={game.away.id}>{game.away.abbreviation} — {game.away.name}</option><option value={game.home.id}>{game.home.abbreviation} — {game.home.name}</option></select><input className="focus-ring min-h-11 rounded-xl border bg-black/20 px-3 text-sm" name="spread" defaultValue={game.spread ?? undefined} required type="number" min="0.5" step="0.5" placeholder="Spread"/><Button type="submit" className={game.hasLine ? "bg-white/10 text-white" : undefined}>{game.hasLine ? "Save edit" : "Add line"}</Button></form>;
 }
 
