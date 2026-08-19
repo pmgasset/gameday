@@ -26,6 +26,7 @@ If you do not have terminal access, open **SQL Editor → New query** in the Sup
 5. `supabase/migrations/0005_repair_invitation_crypto.sql`
 6. `supabase/migrations/0006_immediate_schedule_import.sql`
 7. `supabase/migrations/0007_player_lined_game_visibility.sql`
+8. `supabase/migrations/0008_pool_hardening_and_odds.sql`
 
 Do not run either file against a shared project that already has GameDay-named tables or an unrelated `public.profiles` signup trigger.
 
@@ -53,6 +54,8 @@ Finally run [`supabase/cron.sql`](supabase/cron.sql) in the SQL Editor. It insta
 
 With no terminal access, deploy `sports-sync` via **Edge Functions → Deploy a new function → Via Editor**. Use the source at `supabase/functions/sports-sync/index.ts`, turn off **Verify JWT**, then add `BALLDONTLIE_API_KEY` under Edge Function Secrets. The Vault and scheduler statements still run in SQL Editor.
 
-When a Commissioner opens a week, GameDay immediately asks the secured Edge Function to import and save the matching BALLDONTLIE teams and games. The scheduled job later reconciles schedule changes and keeps live scores current without repeatedly re-importing the full schedule. The commissioner then selects each imported matchup and enters only its underdog and spread—no team abbreviations or kickoff times. If the provider is unavailable, the existing manual game-line form remains available as a fallback. Migration `0004` enables Realtime only for `games`; `picks` are intentionally excluded to prevent hidden-pick leakage. Apply migration `0006` as well; it grants schedule visibility only to pool admins before a line is created.
+When a Commissioner opens a week, GameDay immediately asks the secured Edge Function to import and save the matching BALLDONTLIE teams and games. The scheduled job later reconciles schedule changes and keeps live scores current without repeatedly re-importing the full schedule. The commissioner reviews each imported matchup and can enter or edit its underdog/spread—no team abbreviations or kickoff times are needed. If the provider is unavailable, the existing manual game-line form remains available as a fallback. Migration `0004` enables Realtime only for `games`; `picks` are intentionally excluded to prevent hidden-pick leakage. Apply migration `0006` as well; it grants schedule visibility only to pool admins before a line is created.
+
+After applying migration `0008`, the same sync also requests BALLDONTLIE NFL odds and pre-fills eligible underdogs/spreads when the API account has odds access. Commissioner edits are retained as manual overrides. Deploy the updated `sports-sync` function after the database migration; no additional secret is required.
 
 For production administration, expose narrowly scoped server actions/RPCs for membership state, roles, lines, and overrides. Each must call `is_pool_admin`, write an `audit_events` record, and preserve explicit override metadata.

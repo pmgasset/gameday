@@ -25,6 +25,22 @@ type OpenWeek = {
   nfl_week: number;
   seasons: { nfl_season: number; pool_id: string } | null;
 };
+type OpenPoolWeek = { poolId: string; season: number; week: number };
+type RemoteOdds = {
+  game_id: number;
+  vendor: string;
+  spread_home_value: string | number | null;
+  spread_away_value: string | number | null;
+  updated_at?: string;
+};
+type StoredGame = {
+  id: string;
+  provider_game_id: string;
+  nfl_season: number;
+  nfl_week: number;
+  home_team_id: string;
+  away_team_id: string;
+};
 type LocalGame = {
   id: string;
   provider_game_id: string;
@@ -83,11 +99,19 @@ async function getWeekGames(providerKey: string, season: number, week: number): 
   return result.data;
 }
 
-async function getOpenWeeks(
+async function getWeekOdds(providerKey: string, season: number, week: number): Promise<RemoteOdds[]> {
+  const result = await providerRequest<{ data: RemoteOdds[] }>(
+    providerKey,
+    `/odds?season=${season}&week=${week}&per_page=100`,
+  );
+  return result.data;
+}
+
+async function getOpenPoolWeeks(
   database: ReturnType<typeof createClient>,
   poolId?: string,
   requestedWeek?: number,
-): Promise<WeekKey[]> {
+): Promise<OpenPoolWeek[]> {
   let query = database
     .from("weeks")
     .select("nfl_week,seasons!inner(nfl_season,is_active,pool_id)")
@@ -97,10 +121,8 @@ async function getOpenWeeks(
   if (requestedWeek) query = query.eq("nfl_week", requestedWeek);
   const { data, error } = await query;
   if (error) throw error;
-  return uniqueWeeks(
-    ((data ?? []) as unknown as OpenWeek[]).flatMap((week) =>
-      week.seasons ? [{ season: week.seasons.nfl_season, week: week.nfl_week }] : [],
-    ),
+  return ((data ?? []) as unknown as OpenWeek[]).flatMap((week) =>
+    week.seasons ? [{ poolId: week.seasons.pool_id, season: week.seasons.nfl_season, week: week.nfl_week }] : [],
   );
 }
 
@@ -149,13 +171,88 @@ async function ensureTeams(
   return teamMap;
 }
 
+function preferredOdds(odds: RemoteOdds[]): RemoteOdds[] {
+  const vendorRank = (vendor: string) => {
+    const normalized = vendor.toLowerCase();
+    if (normalized === "draftkings") return 0;
+    if (normalized === "fanduel") return 1;
+    if (normalized === "betmgm") return 2;
+    return 3;
+  };
+  const selected = new Map<number, RemoteOdds>();
+  for (const line of odds) {
+    const current = selected.get(line.game_id);
+    if (!current || vendorRank(line.vendor) < vendorRank(current.vendor) || (
+      vendorRank(line.vendor) === vendorRank(current.vendor)
+      && (line.updated_at ?? "") > (current.updated_at ?? "")
+    )) selected.set(line.game_id, line);
+  }
+  return [...selected.values()];
+}
+
+function underdogForOdds(game: StoredGame, odds: RemoteOdds): { teamId: string; spread: number } | null {
+  const home = Number(odds.spread_home_value);
+  const away = Number(odds.spread_away_value);
+  if (!Number.isFinite(home) || !Number.isFinite(away)) return null;
+  if (home > 0 && away < 0) return { teamId: game.home_team_id, spread: home };
+  if (away > 0 && home < 0) return { teamId: game.away_team_id, spread: away };
+  return null; // Pick'em, malformed, or a market without an underdog.
+}
+
+async function prefillOdds(
+  database: ReturnType<typeof createClient>,
+  providerKey: string,
+  poolWeeks: OpenPoolWeek[],
+): Promise<number> {
+  const weeks = uniqueWeeks(poolWeeks.map(({ season, week }) => ({ season, week })));
+  if (!weeks.length) return 0;
+  let oddsByWeek: RemoteOdds[][];
+  try {
+    oddsByWeek = await Promise.all(weeks.map((week) => getWeekOdds(providerKey, week.season, week.week)));
+  } catch {
+    // Odds access depends on the BALLDONTLIE account tier and starts only at
+    // its documented coverage point. Schedule import must remain usable.
+    return 0;
+  }
+  const providerGameIds = [...new Set(oddsByWeek.flat().map((line) => String(line.game_id)))];
+  if (!providerGameIds.length) return 0;
+  const { data, error } = await database
+    .from("games")
+    .select("id,provider_game_id,nfl_season,nfl_week,home_team_id,away_team_id")
+    .eq("provider", PROVIDER)
+    .in("provider_game_id", providerGameIds);
+  if (error) throw error;
+  const games = new Map(((data ?? []) as StoredGame[]).map((game) => [game.provider_game_id, game]));
+  let affected = 0;
+  for (const odds of preferredOdds(oddsByWeek.flat())) {
+    const game = games.get(String(odds.game_id));
+    if (!game) continue;
+    const line = underdogForOdds(game, odds);
+    if (!line) continue;
+    const matchingPools = poolWeeks.filter((poolWeek) => poolWeek.season === game.nfl_season && poolWeek.week === game.nfl_week);
+    for (const poolWeek of matchingPools) {
+      const { error: lineError } = await database.rpc("prefill_odds_line", {
+        p_pool_id: poolWeek.poolId,
+        p_game_id: game.id,
+        p_underdog_team_id: line.teamId,
+        p_spread: line.spread,
+        p_source: `balldontlie:${odds.vendor}`,
+      });
+      if (lineError) throw lineError;
+      affected++;
+    }
+  }
+  return affected;
+}
+
 async function saveSchedule(
   database: ReturnType<typeof createClient>,
   providerKey: string,
   poolId?: string,
   requestedWeek?: number,
 ): Promise<number> {
-  const weeks = await getOpenWeeks(database, poolId, requestedWeek);
+  const poolWeeks = await getOpenPoolWeeks(database, poolId, requestedWeek);
+  const weeks = uniqueWeeks(poolWeeks.map(({ season, week }) => ({ season, week })));
   if (!weeks.length) return 0;
 
   const gamesByWeek = await Promise.all(
@@ -204,7 +301,10 @@ async function saveSchedule(
     }
     affected++;
   }
-  return affected;
+  const oddsAffected = await prefillOdds(database, providerKey, poolWeeks);
+  const { data: finalized, error: finalizeError } = await database.rpc("finalize_ready_pool_weeks");
+  if (finalizeError) throw finalizeError;
+  return affected + oddsAffected + Number(finalized ?? 0);
 }
 
 function isInLiveWindow(game: LocalGame, now: number): boolean {
@@ -259,7 +359,9 @@ async function syncLiveGames(
     }
     affected++;
   }
-  return affected;
+  const { data: finalized, error: finalizeError } = await database.rpc("finalize_ready_pool_weeks");
+  if (finalizeError) throw finalizeError;
+  return affected + Number(finalized ?? 0);
 }
 
 async function requesterCanImport(
