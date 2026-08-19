@@ -1,6 +1,10 @@
 import type { Metadata, Viewport } from "next";
+import { Barlow, Barlow_Condensed } from "next/font/google";
 import "./globals.css";
 import { PwaInstallPrompt } from "@/components/pwa-install";
+
+const bodyFont = Barlow({ subsets: ["latin"], variable: "--font-sans", display: "swap", weight: ["400", "500", "600", "700", "800"] });
+const displayFont = Barlow_Condensed({ subsets: ["latin"], variable: "--font-display", display: "swap", weight: ["500", "600", "700", "800", "900"] });
 
 export const metadata: Metadata = {
   title: "GameDay — UnderDog Pool",
@@ -14,5 +18,5 @@ export const metadata: Metadata = {
 export const viewport: Viewport = { themeColor: "#0d1422", viewportFit: "cover" };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en"><body className="font-sans antialiased">{children}<PwaInstallPrompt/></body></html>;
+  return <html lang="en"><body className={`${bodyFont.variable} ${displayFont.variable} font-sans antialiased`}>{children}<PwaInstallPrompt/></body></html>;
 }

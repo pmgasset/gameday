@@ -6,6 +6,7 @@
 * { border-color: hsl(var(--border)); }
 html { background: hsl(var(--background)); color-scheme: dark; }
 body { min-height:100vh; background:radial-gradient(ellipse 90% 45% at 50% -10%,hsl(153 76% 45% / .18),transparent 60%),hsl(var(--background)); color:hsl(var(--foreground)); }
+h1, h2, h3 { font-family:var(--font-display),ui-sans-serif,system-ui; font-stretch:condensed; letter-spacing:-.02em; }
 button, a { -webkit-tap-highlight-color: transparent; }
 .surface { background:hsl(var(--surface) / .86); border:1px solid hsl(var(--border)); box-shadow:0 18px 45px hsl(222 45% 3% / .3); }
 .eyebrow { color:hsl(var(--primary)); font-size:.7rem; font-weight:800; letter-spacing:.16em; text-transform:uppercase; }
