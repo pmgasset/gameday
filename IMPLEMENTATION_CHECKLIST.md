@@ -5,6 +5,7 @@
 | Next.js TypeScript/Tailwind foundation | IMPLEMENTED | App Router mobile UI and semantic tokens |
 | Player home, pick confirmation, sealed picks, standings | IMPLEMENTED | authenticated pool/line/game/pick repository and server-enforced pick mutation |
 | Core deadline and scoring domain functions | IMPLEMENTED | `lib/domain`, `tests/*.test.ts` |
+| Official NFL week grouping for opening/lock/reveal times | IMPLEMENTED | slate-anchored week window in `lib/domain/deadlines.ts` and `0014_official_nfl_week_calendar.sql` |
 | Supabase normalized schema | IMPLEMENTED | `0001_gameday.sql` |
 | RLS hidden-pick protection | IMPLEMENTED | pick select policy + DB reveal helper |
 | Server enforced pick submission / assisted pick | IMPLEMENTED | immutable server-enforced `submit_pick` RPC + commissioner UI |

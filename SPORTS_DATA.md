@@ -10,4 +10,6 @@ During each schedule import GameDay also requests `GET /nfl/v1/odds?season=…&w
 
 `supabase/cron.sql` uses `pg_cron` and `pg_net` to schedule the three-hourly schedule import and five-minute live-score check; the target URL and a Supabase secret API key live in Vault. This works independently of Vercel's plan. Production code should add bounded retry/backoff around transient provider failures and log health from `provider_syncs` in the commissioner dashboard.
 
+Each imported game keeps the provider's official `season`/`week`, and the import rejects any game BALLDONTLIE returns for a different week than the one requested. That stored week is what groups a pool slate: GameDay anchors the week on the Eastern Sunday the slate is played, so games that cross a calendar-week boundary — a Wednesday or Thursday opener, a Monday nighter — still open and lock as one week.
+
 Development fixtures in `lib/fixtures/week.ts` cover Thursday, Sunday, Sunday afternoon/night, and Monday games. They are demo data, not a provider substitute.

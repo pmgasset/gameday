@@ -32,6 +32,7 @@ If you do not have terminal access, open **SQL Editor → New query** in the Sup
 11. `supabase/migrations/0011_commissioner_member_notes.sql`
 12. `supabase/migrations/0012_temporary_pick_blocks.sql`
 13. `supabase/migrations/0013_week_participation_and_member_exit.sql`
+14. `supabase/migrations/0014_official_nfl_week_calendar.sql`
 
 Do not run either file against a shared project that already has GameDay-named tables or an unrelated `public.profiles` signup trigger.
 

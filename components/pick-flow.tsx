@@ -5,17 +5,17 @@ import { CalendarCheck2, CheckCircle2, Eye, LockKeyhole, ShieldCheck } from "luc
 import { useState, type ReactNode } from "react";
 import { submitPick } from "@/app/actions/pool";
 import type { LiveGame, LivePick } from "@/lib/data/pool";
-import { effectivePickDeadline, formatEastern, sundayGlobalDeadline, weeklyPicksOpenAt } from "@/lib/domain/deadlines";
+import { effectivePickDeadline, formatEastern, type NflWeekWindow } from "@/lib/domain/deadlines";
 import { Button, Card, Pill } from "./ui";
 import { TeamLogo } from "./team-logo";
 
-export function PickFlow({ poolId, weekId, weekNumber, games, currentPick, saved, error }: { poolId: string; weekId: string; weekNumber: number; games: LiveGame[]; currentPick: LivePick | undefined; saved: boolean; error?: string }) {
+export function PickFlow({ poolId, weekId, weekNumber, weekWindow, games, currentPick, saved, error }: { poolId: string; weekId: string; weekNumber: number; weekWindow: NflWeekWindow | null; games: LiveGame[]; currentPick: LivePick | undefined; saved: boolean; error?: string }) {
   const [candidate, setCandidate] = useState<LiveGame | null>(null);
   const pickedGame = games.find((game) => game.id === currentPick?.gameId);
-  const firstKickoff = games[0] ? new Date(games[0].kickoff) : null;
-  const sundayCutoff = firstKickoff ? sundayGlobalDeadline(firstKickoff) : null;
-  const kickoffDeadlineGames = sundayCutoff ? games.filter((game) => effectivePickDeadline(new Date(game.kickoff)) < sundayCutoff) : games;
-  const sundayCutoffGames = sundayCutoff ? games.filter((game) => effectivePickDeadline(new Date(game.kickoff)) >= sundayCutoff) : [];
+  // Every game of the official NFL week shares one open time and one Sunday cutoff.
+  const sundayCutoff = weekWindow ? new Date(weekWindow.globalDeadline) : null;
+  const kickoffDeadlineGames = weekWindow ? games.filter((game) => effectivePickDeadline(new Date(game.kickoff), weekWindow) < weekWindow.globalDeadline) : games;
+  const sundayCutoffGames = weekWindow ? games.filter((game) => effectivePickDeadline(new Date(game.kickoff), weekWindow) >= weekWindow.globalDeadline) : [];
 
   return <>
     <section className="px-5 pt-4">
@@ -26,9 +26,9 @@ export function PickFlow({ poolId, weekId, weekNumber, games, currentPick, saved
     {saved && <div className="mx-5 mt-5 rounded-xl bg-[hsl(var(--primary)/.12)] p-3 text-sm font-bold text-[hsl(var(--primary))]">Pick saved. You&apos;re all set.</div>}
     {error && <div className="mx-5 mt-5 rounded-xl bg-red-500/10 p-3 text-sm font-bold text-red-200">{error}</div>}
     {currentPick && <section className="px-5 pt-6"><Card className="border-[hsl(var(--primary)/.4)] bg-[hsl(var(--primary)/.08)] p-4"><div className="flex gap-3"><CheckCircle2 className="mt-0.5 text-[hsl(var(--primary))]"/><TeamLogo abbreviation={pickedGame?.underdog.abbreviation ?? "NFL"} label={pickedGame?.underdog.name ?? "Your underdog"} className="h-11 w-11"/><div><p className="eyebrow">Your current pick</p><p className="mt-1 font-black">{pickedGame ? `${pickedGame.underdog.city} ${pickedGame.underdog.name}` : "Your underdog"} +{currentPick.spread}</p><p className="text-sm text-[hsl(var(--muted))]">{pickedGame?.locked ? "Locked for this week." : "You can change this before the deadline."}</p></div></div></Card></section>}
-    {firstKickoff && sundayCutoff && <WeekTimeline pickOpensAt={weeklyPicksOpenAt(firstKickoff)} sundayCutoff={sundayCutoff} kickoffDeadlineGames={kickoffDeadlineGames} sundayCutoffGames={sundayCutoffGames}/>}
-    <PickGroup title="Locks at kickoff" description="These picks become visible to everyone when the individual game starts." games={kickoffDeadlineGames} onPick={setCandidate}/>
-    <PickGroup title="Sunday 1:00 PM cutoff" description={sundayCutoff ? `Every remaining Sunday and Monday pick locks, and all picks become visible, at ${formatEastern(sundayCutoff)}.` : "Remaining picks follow the Sunday cutoff."} games={sundayCutoffGames} onPick={setCandidate}/>
+    {weekWindow && sundayCutoff && <WeekTimeline pickOpensAt={new Date(weekWindow.picksOpenAt)} sundayCutoff={sundayCutoff} kickoffDeadlineGames={kickoffDeadlineGames} sundayCutoffGames={sundayCutoffGames}/>}
+    <PickGroup title="Locks at kickoff" description="These picks become visible to everyone when the individual game starts." games={kickoffDeadlineGames} week={weekWindow} onPick={setCandidate}/>
+    <PickGroup title="Sunday 1:00 PM cutoff" description={sundayCutoff ? `Every remaining Sunday and Monday pick locks, and all picks become visible, at ${formatEastern(sundayCutoff)}.` : "Remaining picks follow the Sunday cutoff."} games={sundayCutoffGames} week={weekWindow} onPick={setCandidate}/>
     <AlertDialog.Root open={!!candidate} onOpenChange={(open) => !open && setCandidate(null)}>
       <AlertDialog.Portal>
         <AlertDialog.Overlay className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm"/>
@@ -61,13 +61,13 @@ function TimelineItem({ icon, label, detail }: { icon: ReactNode; label: string;
   return <li className="flex gap-4 px-5 py-4"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[hsl(var(--primary)/.12)] text-[hsl(var(--primary))]">{icon}</span><div><p className="font-black">{label}</p><p className="mt-1 text-sm leading-5 text-[hsl(var(--muted))]">{detail}</p></div></li>;
 }
 
-function PickGroup({ title, description, games, onPick }: { title: string; description: string; games: LiveGame[]; onPick: (game: LiveGame) => void }) {
+function PickGroup({ title, description, games, week, onPick }: { title: string; description: string; games: LiveGame[]; week: NflWeekWindow | null; onPick: (game: LiveGame) => void }) {
   if (!games.length) return null;
-  return <section className="px-5 py-6"><div className="mb-4"><p className="eyebrow">Game deadline group</p><h2 className="mt-1 text-xl font-black">{title}</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-[hsl(var(--muted))]">{description}</p></div><div className="grid gap-4 md:grid-cols-2">{games.map((game) => <PickCard key={game.id} game={game} onPick={onPick}/>)}</div></section>;
+  return <section className="px-5 py-6"><div className="mb-4"><p className="eyebrow">Game deadline group</p><h2 className="mt-1 text-xl font-black">{title}</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-[hsl(var(--muted))]">{description}</p></div><div className="grid gap-4 md:grid-cols-2">{games.map((game) => <PickCard key={game.id} game={game} week={week} onPick={onPick}/>)}</div></section>;
 }
 
-function PickCard({ game, onPick }: { game: LiveGame; onPick: (game: LiveGame) => void }) {
-  const unavailableMessage = game.locked ? "Locked" : `Opens ${formatEastern(weeklyPicksOpenAt(new Date(game.kickoff)))}`;
-  const deadline = effectivePickDeadline(new Date(game.kickoff));
+function PickCard({ game, week, onPick }: { game: LiveGame; week: NflWeekWindow | null; onPick: (game: LiveGame) => void }) {
+  const unavailableMessage = game.locked || !week ? "Locked" : `Opens ${formatEastern(week.picksOpenAt)}`;
+  const deadline = week ? effectivePickDeadline(new Date(game.kickoff), week) : new Date(game.kickoff);
   return <Card className="overflow-hidden p-4"><div className="mb-5 flex items-center justify-between"><Pill className="border-[hsl(var(--primary)/.45)] bg-[hsl(var(--primary)/.1)] text-[hsl(var(--primary))]">Underdog</Pill><span className="text-right text-xs font-semibold text-[hsl(var(--muted))]">{formatEastern(game.kickoff)}</span></div><p className="text-xs font-bold uppercase tracking-wide text-[hsl(var(--muted))]">{game.away.name} at {game.home.name}</p><div className="mt-4 flex items-center gap-3"><TeamLogo abbreviation={game.underdog.abbreviation} label={`${game.underdog.city} ${game.underdog.name}`} className="h-16 w-16"/><span className="text-xs font-black text-[hsl(var(--muted))]">VS</span><TeamLogo abbreviation={game.favorite.abbreviation} label={`${game.favorite.city} ${game.favorite.name}`} className="h-12 w-12 opacity-75"/><div className="min-w-0 flex-1"><h2 className="truncate text-2xl font-black">{game.underdog.city} {game.underdog.name}</h2><p className="mt-1 truncate text-sm text-[hsl(var(--muted))]">vs {game.favorite.city} {game.favorite.name}</p></div><span className="text-3xl font-black text-[hsl(var(--primary))]">+{game.spread}</span></div><p className="mt-5 rounded-xl bg-black/15 px-3 py-2 text-xs font-semibold leading-5 text-[hsl(var(--muted))]">Locks &amp; reveals: {formatEastern(deadline)}</p><Button disabled={!game.available} onClick={() => onPick(game)} className="mt-3 w-full">{game.available ? `Pick ${game.underdog.name} +${game.spread}` : unavailableMessage}</Button></Card>;
 }

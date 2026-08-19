@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { isPickAvailable, isPickLocked, isPickRevealed } from "@/lib/domain/deadlines";
+import { isPickAvailable, isPickLocked, isPickRevealed, nflWeekWindow, type NflWeekWindow } from "@/lib/domain/deadlines";
 import type { Role } from "@/lib/domain/types";
 import { serverClient } from "@/lib/supabase/server";
 
@@ -18,7 +18,7 @@ export type LiveGame = { id: string; kickoff: string; status: GameRow["status"];
 export type LivePick = { id: string; playerId: string; playerName: string; gameId: string; teamId: string; spread: number; finalPoints: number | null; submittedAt: string };
 export type PoolMember = { userId: string; displayName: string; role: Role; status: string; pickBlocked: boolean };
 export type ScheduledGame = { id: string; kickoff: string; away: TeamRow; home: TeamRow; hasLine: boolean; underdogTeamId: string | null; spread: number | null; lineSource: string | null; lineManuallyOverridden: boolean };
-export type PoolContext = { userId: string; displayName: string; pool: ActivePool | null; pendingPool: boolean; pickBlocked: boolean; weekSkipped: boolean; weeks: PoolWeek[]; week: WeekRow | null; games: LiveGame[]; schedule: ScheduledGame[]; picks: LivePick[]; members: PoolMember[]; memberNotes: Record<string, string>; seasonTotals: Record<string, number>; lastSync: string | null };
+export type PoolContext = { userId: string; displayName: string; pool: ActivePool | null; pendingPool: boolean; pickBlocked: boolean; weekSkipped: boolean; weeks: PoolWeek[]; week: WeekRow | null; weekWindow: NflWeekWindow | null; games: LiveGame[]; schedule: ScheduledGame[]; picks: LivePick[]; members: PoolMember[]; memberNotes: Record<string, string>; seasonTotals: Record<string, number>; lastSync: string | null };
 
 export function supabaseConfigured(): boolean { return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY); }
 
@@ -31,13 +31,14 @@ export async function requirePoolContext(selectedWeek?: number): Promise<PoolCon
   const { data: memberData } = await db.from("pool_members").select("pool_id,role,status,pick_blocked_at,pools(name)").eq("user_id", user.id);
   const memberships = (memberData ?? []) as unknown as MemberRow[];
   const active = memberships.find((member) => member.status === "active");
-  if (!active) return { userId: user.id, displayName: (profile as { display_name?: string } | null)?.display_name ?? "Player", pool: null, pendingPool: memberships.some((member) => member.status === "pending"), pickBlocked: false, weekSkipped: false, weeks: [], week: null, games: [], schedule: [], picks: [], members: [], memberNotes: {}, seasonTotals: {}, lastSync: null };
+  if (!active) return { userId: user.id, displayName: (profile as { display_name?: string } | null)?.display_name ?? "Player", pool: null, pendingPool: memberships.some((member) => member.status === "pending"), pickBlocked: false, weekSkipped: false, weeks: [], week: null, weekWindow: null, games: [], schedule: [], picks: [], members: [], memberNotes: {}, seasonTotals: {}, lastSync: null };
   const pool = { id: active.pool_id, name: active.pools?.name ?? "GameDay Pool", role: active.role };
   const { data: seasons } = await db.from("seasons").select("id,nfl_season").eq("pool_id", pool.id).eq("is_active", true).limit(1);
   const season = (seasons ?? []) as Array<{ id: string; nfl_season: number }>;
   const { data: weekData } = season[0] ? await db.from("weeks").select("id,nfl_week,status").eq("season_id", season[0].id).order("nfl_week", { ascending: true }) : { data: [] };
   const weeks = (weekData ?? []) as WeekRow[];
-  const week = weeks.find((item) => item.nfl_week === selectedWeek) ?? weeks.at(-1) ?? null;
+  const defaultWeek = weeks.find((item) => item.status !== "complete") ?? weeks.at(-1) ?? null;
+  const week = weeks.find((item) => item.nfl_week === selectedWeek) ?? defaultWeek;
   const { data: lineData } = await db.from("pool_game_lines").select("game_id,underdog_team_id,favorite_team_id,underdog_spread,source,manual_override").eq("pool_id", pool.id);
   const lines = (lineData ?? []) as unknown as LineRow[];
   const { data: gameData } = week && season[0] ? await db.from("games").select("id,kickoff_at,status,home_team_id,away_team_id,home_score,away_score,period,game_clock,manual_override").eq("nfl_season", season[0].nfl_season).eq("nfl_week", week.nfl_week) : { data: [] };
@@ -46,9 +47,12 @@ export async function requirePoolContext(selectedWeek?: number): Promise<PoolCon
   const { data: teamData } = teamIds.length ? await db.from("teams").select("id,abbreviation,city,name").in("id", teamIds) : { data: [] };
   const teams = new Map(((teamData ?? []) as unknown as TeamRow[]).map((team) => [team.id, team]));
   const now = new Date();
-  const games = gameRows.flatMap((game) => {
+  // gameRows is the whole official NFL week, so the slate — never a single
+  // kickoff's calendar week — anchors this week's open, lock, and reveal times.
+  const weekWindow = nflWeekWindow(gameRows.map((game) => game.kickoff_at));
+  const games = weekWindow === null ? [] : gameRows.flatMap((game) => {
     const line = lines.find((item) => item.game_id === game.id); const home = teams.get(game.home_team_id); const away = teams.get(game.away_team_id); const underdog = line && teams.get(line.underdog_team_id); const favorite = line && teams.get(line.favorite_team_id);
-    return line && home && away && underdog && favorite ? [{ id: game.id, kickoff: game.kickoff_at, status: game.status, home, away, underdog, favorite, spread: Number(line.underdog_spread), homeScore: game.home_score, awayScore: game.away_score, period: game.period, clock: game.game_clock, locked: isPickLocked(new Date(game.kickoff_at), now), available: game.status === "scheduled" && isPickAvailable(new Date(game.kickoff_at), now), revealed: isPickRevealed(new Date(game.kickoff_at), now), manuallyOverridden: game.manual_override }] : [];
+    return line && home && away && underdog && favorite ? [{ id: game.id, kickoff: game.kickoff_at, status: game.status, home, away, underdog, favorite, spread: Number(line.underdog_spread), homeScore: game.home_score, awayScore: game.away_score, period: game.period, clock: game.game_clock, locked: isPickLocked(new Date(game.kickoff_at), weekWindow, now), available: game.status === "scheduled" && isPickAvailable(new Date(game.kickoff_at), weekWindow, now), revealed: isPickRevealed(new Date(game.kickoff_at), weekWindow, now), manuallyOverridden: game.manual_override }] : [];
   }).sort((a, b) => new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime());
   const schedule = gameRows.flatMap((game) => {
     const away = teams.get(game.away_team_id), home = teams.get(game.home_team_id), line = lines.find((item) => item.game_id === game.id);
@@ -74,5 +78,5 @@ export async function requirePoolContext(selectedWeek?: number): Promise<PoolCon
     return totals;
   }, {});
   const { data: syncData } = await db.from("provider_syncs").select("succeeded_at").eq("provider", "balldontlie").not("succeeded_at", "is", null).order("succeeded_at", { ascending: false }).limit(1);
-  return { userId: user.id, displayName: (profile as { display_name?: string } | null)?.display_name ?? "Player", pool, pendingPool: false, pickBlocked: Boolean(active.pick_blocked_at), weekSkipped, weeks, week, games, schedule, picks, members, memberNotes, seasonTotals, lastSync: ((syncData ?? [])[0] as { succeeded_at: string } | undefined)?.succeeded_at ?? null };
+  return { userId: user.id, displayName: (profile as { display_name?: string } | null)?.display_name ?? "Player", pool, pendingPool: false, pickBlocked: Boolean(active.pick_blocked_at), weekSkipped, weeks, week, weekWindow, games, schedule, picks, members, memberNotes, seasonTotals, lastSync: ((syncData ?? [])[0] as { succeeded_at: string } | undefined)?.succeeded_at ?? null };
 }
