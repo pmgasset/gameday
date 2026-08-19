@@ -50,7 +50,7 @@ type LocalGame = {
   status: "scheduled" | "in_progress";
   manual_override: boolean;
 };
-type SyncMode = "schedule" | "live";
+type SyncMode = "schedule" | "live" | "snapshot";
 type SyncRequest = {
   poolId?: string;
   week?: number;
@@ -59,6 +59,7 @@ type SyncRequest = {
 };
 type WeekKey = { season: number; week: number };
 type TeamId = { id: string; provider_id: string | null };
+type SyncOutcome = { affected: number; warning?: string };
 
 const PROVIDER = "balldontlie";
 const PROVIDER_BASE_URL = "https://api.balldontlie.io/nfl/v1";
@@ -106,12 +107,15 @@ async function getWeekGames(providerKey: string, season: number, week: number): 
   return games;
 }
 
-async function getWeekOdds(providerKey: string, season: number, week: number): Promise<RemoteOdds[]> {
-  const result = await providerRequest<{ data: RemoteOdds[] }>(
-    providerKey,
-    `/odds?season=${season}&week=${week}&per_page=100`,
-  );
-  return result.data;
+async function getGameOdds(providerKey: string, gameIds: string[]): Promise<RemoteOdds[]> {
+  if (!gameIds.length) return [];
+  const batches = Array.from({ length: Math.ceil(gameIds.length / 100) }, (_, index) => gameIds.slice(index * 100, index * 100 + 100));
+  const results = await Promise.all(batches.map(async (batch) => {
+    const query = new URLSearchParams({ per_page: "100" });
+    for (const gameId of batch) query.append("game_ids[]", gameId);
+    return providerRequest<{ data: RemoteOdds[] }>(providerKey, `/odds?${query}`);
+  }));
+  return results.flatMap((result) => result.data ?? []);
 }
 
 async function getOpenPoolWeeks(
@@ -178,7 +182,7 @@ async function ensureTeams(
   return teamMap;
 }
 
-function preferredOdds(odds: RemoteOdds[]): RemoteOdds[] {
+function selectedOdds(odds: RemoteOdds[], allowedVendors?: string[]): RemoteOdds[] {
   const vendorRank = (vendor: string) => {
     const normalized = vendor.toLowerCase();
     if (normalized === "draftkings") return 0;
@@ -188,6 +192,7 @@ function preferredOdds(odds: RemoteOdds[]): RemoteOdds[] {
   };
   const selected = new Map<number, RemoteOdds>();
   for (const line of odds) {
+    if (allowedVendors && !allowedVendors.includes(line.vendor.toLowerCase())) continue;
     const current = selected.get(line.game_id);
     if (!current || vendorRank(line.vendor) < vendorRank(current.vendor) || (
       vendorRank(line.vendor) === vendorRank(current.vendor)
@@ -210,31 +215,24 @@ async function prefillOdds(
   database: ReturnType<typeof createClient>,
   providerKey: string,
   poolWeeks: OpenPoolWeek[],
-): Promise<number> {
-  const weeks = uniqueWeeks(poolWeeks.map(({ season, week }) => ({ season, week })));
-  if (!weeks.length) return 0;
-  let oddsByWeek: RemoteOdds[][];
+): Promise<SyncOutcome> {
+  const games = await storedGamesForPoolWeeks(database, poolWeeks);
+  if (!games.length) return { affected: 0 };
+  let odds: RemoteOdds[];
   try {
-    oddsByWeek = await Promise.all(weeks.map((week) => getWeekOdds(providerKey, week.season, week.week)));
-  } catch {
-    // Odds access depends on the BALLDONTLIE account tier and starts only at
-    // its documented coverage point. Schedule import must remain usable.
-    return 0;
+    odds = await getGameOdds(providerKey, games.map((game) => game.provider_game_id));
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : "Unknown odds error";
+    // The schedule remains useful when odds coverage is unavailable, but the
+    // audit row makes an access failure visible to commissioners.
+    return { affected: 0, warning: `BALLDONTLIE odds prefill failed: ${message}` };
   }
-  const providerGameIds = [...new Set(oddsByWeek.flat().map((line) => String(line.game_id)))];
-  if (!providerGameIds.length) return 0;
-  const { data, error } = await database
-    .from("games")
-    .select("id,provider_game_id,nfl_season,nfl_week,home_team_id,away_team_id")
-    .eq("provider", PROVIDER)
-    .in("provider_game_id", providerGameIds);
-  if (error) throw error;
-  const games = new Map(((data ?? []) as StoredGame[]).map((game) => [game.provider_game_id, game]));
+  const gamesByProviderId = new Map(games.map((game) => [game.provider_game_id, game]));
   let affected = 0;
-  for (const odds of preferredOdds(oddsByWeek.flat())) {
-    const game = games.get(String(odds.game_id));
+  for (const oddsLine of selectedOdds(odds)) {
+    const game = gamesByProviderId.get(String(oddsLine.game_id));
     if (!game) continue;
-    const line = underdogForOdds(game, odds);
+    const line = underdogForOdds(game, oddsLine);
     if (!line) continue;
     const matchingPools = poolWeeks.filter((poolWeek) => poolWeek.season === game.nfl_season && poolWeek.week === game.nfl_week);
     for (const poolWeek of matchingPools) {
@@ -243,13 +241,72 @@ async function prefillOdds(
         p_game_id: game.id,
         p_underdog_team_id: line.teamId,
         p_spread: line.spread,
-        p_source: `balldontlie:${odds.vendor}`,
+        p_source: `balldontlie:${oddsLine.vendor}`,
       });
       if (lineError) throw lineError;
       affected++;
     }
   }
-  return affected;
+  return { affected };
+}
+
+async function storedGamesForPoolWeeks(
+  database: ReturnType<typeof createClient>,
+  poolWeeks: OpenPoolWeek[],
+): Promise<StoredGame[]> {
+  const weeks = uniqueWeeks(poolWeeks.map(({ season, week }) => ({ season, week })));
+  if (!weeks.length) return [];
+  const { data, error } = await database
+    .from("games")
+    .select("id,provider_game_id,nfl_season,nfl_week,home_team_id,away_team_id")
+    .eq("provider", PROVIDER)
+    .in("nfl_season", [...new Set(weeks.map((week) => week.season))])
+    .in("nfl_week", [...new Set(weeks.map((week) => week.week))]);
+  if (error) throw error;
+  const requested = new Set(weeks.map((week) => `${week.season}:${week.week}`));
+  return ((data ?? []) as StoredGame[]).filter((game) => requested.has(`${game.nfl_season}:${game.nfl_week}`));
+}
+
+async function snapshotTuesdayOdds(
+  database: ReturnType<typeof createClient>,
+  providerKey: string,
+): Promise<SyncOutcome> {
+  const poolWeeks = await getOpenPoolWeeks(database);
+  const games = await storedGamesForPoolWeeks(database, poolWeeks);
+  if (!games.length) return { affected: 0, warning: "Tuesday odds snapshot skipped: no imported games in an open pool week." };
+
+  const odds = await getGameOdds(providerKey, games.map((game) => game.provider_game_id));
+  const gamesByProviderId = new Map(games.map((game) => [game.provider_game_id, game]));
+  const draftKingsOdds = selectedOdds(odds, ["draftkings"]);
+  const usableGameIds = new Set<string>();
+  let affected = 0;
+
+  for (const oddsLine of draftKingsOdds) {
+    const game = gamesByProviderId.get(String(oddsLine.game_id));
+    if (!game) continue;
+    const line = underdogForOdds(game, oddsLine);
+    if (!line) continue;
+    usableGameIds.add(game.provider_game_id);
+    const matchingPools = poolWeeks.filter((poolWeek) => poolWeek.season === game.nfl_season && poolWeek.week === game.nfl_week);
+    for (const poolWeek of matchingPools) {
+      const { data: locked, error } = await database.rpc("snapshot_provider_odds_line", {
+        p_pool_id: poolWeek.poolId,
+        p_game_id: game.id,
+        p_underdog_team_id: line.teamId,
+        p_spread: line.spread,
+        p_source: "balldontlie:draftkings",
+        p_provider_odds_updated_at: oddsLine.updated_at ?? null,
+      });
+      if (error) throw error;
+      if (locked) affected++;
+    }
+  }
+
+  const missing = games.length - usableGameIds.size;
+  return {
+    affected,
+    warning: missing ? `Tuesday odds snapshot missing usable DraftKings spreads for ${missing} imported game${missing === 1 ? "" : "s"}.` : undefined,
+  };
 }
 
 async function saveSchedule(
@@ -257,10 +314,10 @@ async function saveSchedule(
   providerKey: string,
   poolId?: string,
   requestedWeek?: number,
-): Promise<number> {
+): Promise<SyncOutcome> {
   const poolWeeks = await getOpenPoolWeeks(database, poolId, requestedWeek);
   const weeks = uniqueWeeks(poolWeeks.map(({ season, week }) => ({ season, week })));
-  if (!weeks.length) return 0;
+  if (!weeks.length) return { affected: 0 };
 
   const gamesByWeek = await Promise.all(
     weeks.map(async (week) => getWeekGames(providerKey, week.season, week.week)),
@@ -308,10 +365,10 @@ async function saveSchedule(
     }
     affected++;
   }
-  const oddsAffected = await prefillOdds(database, providerKey, poolWeeks);
+  const odds = await prefillOdds(database, providerKey, poolWeeks);
   const { data: finalized, error: finalizeError } = await database.rpc("finalize_ready_pool_weeks");
   if (finalizeError) throw finalizeError;
-  return affected + oddsAffected + Number(finalized ?? 0);
+  return { affected: affected + odds.affected + Number(finalized ?? 0), warning: odds.warning };
 }
 
 function isInLiveWindow(game: LocalGame, now: number): boolean {
@@ -323,7 +380,7 @@ function isInLiveWindow(game: LocalGame, now: number): boolean {
 async function syncLiveGames(
   database: ReturnType<typeof createClient>,
   providerKey: string,
-): Promise<number> {
+): Promise<SyncOutcome> {
   const { data, error } = await database
     .from("games")
     .select("id,provider_game_id,nfl_season,nfl_week,kickoff_at,status,manual_override")
@@ -332,7 +389,7 @@ async function syncLiveGames(
     .in("status", ["scheduled", "in_progress"]);
   if (error) throw error;
   const candidates = ((data ?? []) as LocalGame[]).filter((game) => isInLiveWindow(game, Date.now()));
-  if (!candidates.length) return 0;
+  if (!candidates.length) return { affected: 0 };
 
   const candidateIds = new Set(candidates.map((game) => game.provider_game_id));
   const localGames = new Map(candidates.map((game) => [game.provider_game_id, game]));
@@ -368,7 +425,18 @@ async function syncLiveGames(
   }
   const { data: finalized, error: finalizeError } = await database.rpc("finalize_ready_pool_weeks");
   if (finalizeError) throw finalizeError;
-  return affected + Number(finalized ?? 0);
+  return { affected: affected + Number(finalized ?? 0) };
+}
+
+function isTuesdaySnapshotTime(now = new Date()): boolean {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+    hour: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(now);
+  const value = (type: string) => parts.find((part) => part.type === type)?.value;
+  return value("weekday") === "Tue" && value("hour") === "09";
 }
 
 async function requesterCanImport(
@@ -394,8 +462,8 @@ async function requesterCanImport(
 }
 
 /**
- * The scheduler uses two modes: a three-hourly bulk schedule import and a
- * five-minute live-score poll that only runs around kickoff or while live.
+ * The scheduler uses a three-hourly bulk schedule import, a five-minute
+ * live-score poll, and a Tuesday 9 AM Eastern DraftKings snapshot.
  */
 Deno.serve(async (request) => {
   const serviceKey = configuredSecretKey();
@@ -410,23 +478,33 @@ Deno.serve(async (request) => {
   const commissionerRequest = !scheduledRequest && await requesterCanImport(database, request, payload);
   if (!scheduledRequest && !commissionerRequest) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
-  const mode: SyncMode = commissionerRequest || payload.mode === "schedule" ? "schedule" : "live";
+  const requestedMode = payload.mode;
+  const mode: SyncMode = commissionerRequest || requestedMode === "schedule"
+    ? "schedule"
+    : requestedMode === "snapshot"
+      ? "snapshot"
+      : "live";
+  if (mode === "snapshot" && !isTuesdaySnapshotTime()) {
+    return Response.json({ ok: true, mode, skipped: true, reason: "Tuesday snapshot runs at 9:00 AM America/New_York." });
+  }
   const { data: sync, error: syncError } = await database
     .from("provider_syncs")
-    .insert({ provider: PROVIDER })
+    .insert({ provider: PROVIDER, sync_mode: mode })
     .select("id")
     .single();
   if (syncError) return Response.json({ error: "Unable to record sync" }, { status: 500 });
 
   try {
-    const affected = mode === "schedule"
+    const outcome = mode === "schedule"
       ? await saveSchedule(database, providerKey, commissionerRequest ? payload.poolId : undefined, commissionerRequest ? payload.week : undefined)
-      : await syncLiveGames(database, providerKey);
+      : mode === "snapshot"
+        ? await snapshotTuesdayOdds(database, providerKey)
+        : await syncLiveGames(database, providerKey);
     await database
       .from("provider_syncs")
-      .update({ succeeded_at: new Date().toISOString(), affected_games: affected })
+      .update({ succeeded_at: new Date().toISOString(), affected_games: outcome.affected, warning_message: outcome.warning ?? null })
       .eq("id", sync.id);
-    return Response.json({ ok: true, mode, affected });
+    return Response.json({ ok: true, mode, affected: outcome.affected, warning: outcome.warning });
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : "Unknown sync error";
     await database.from("provider_syncs").update({ error_message: message }).eq("id", sync.id);

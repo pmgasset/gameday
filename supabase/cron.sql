@@ -3,7 +3,7 @@
 -- before installing separate low-frequency schedule and live-score jobs.
 select cron.unschedule(jobid)
 from cron.job
-where jobname in ('gameday-sports-sync', 'gameday-schedule-sync', 'gameday-live-score-sync');
+where jobname in ('gameday-sports-sync', 'gameday-schedule-sync', 'gameday-live-score-sync', 'gameday-tuesday-odds-snapshot');
 
 -- Persist and reconcile each open week's schedule eight times per day.
 select cron.schedule(
@@ -17,6 +17,23 @@ select cron.schedule(
         'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'gameday_function_key')
       ),
       body := jsonb_build_object('source', 'supabase-cron', 'mode', 'schedule')
+    );
+  $$
+);
+
+-- Run hourly on Tuesday. The Edge Function performs the snapshot only at
+-- 9:00 AM America/New_York, so daylight saving time never shifts the line.
+select cron.schedule(
+  'gameday-tuesday-odds-snapshot',
+  '0 * * * 2',
+  $$
+    select net.http_post(
+      url := (select decrypted_secret from vault.decrypted_secrets where name = 'gameday_project_url') || '/functions/v1/sports-sync',
+      headers := jsonb_build_object(
+        'Content-Type', 'application/json',
+        'apikey', (select decrypted_secret from vault.decrypted_secrets where name = 'gameday_function_key')
+      ),
+      body := jsonb_build_object('source', 'supabase-cron', 'mode', 'snapshot')
     );
   $$
 );
