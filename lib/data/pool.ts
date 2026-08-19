@@ -11,13 +11,14 @@ type GameRow = { id: string; kickoff_at: string; status: "scheduled" | "in_progr
 type TeamRow = { id: string; abbreviation: string; city: string; name: string };
 type PickRow = { id: string; player_id: string; game_id: string; team_id: string; stored_spread: number | string; final_points: number | string | null; submitted_at: string };
 type ProfileRow = { id: string; display_name: string };
+type PendingMemberDetailRow = { user_id: string; display_name: string; email: string | null; requested_at: string };
 type MemberNoteRow = { member_id: string; note: string };
 
 export type ActivePool = { id: string; name: string; role: Role };
 export type PoolWeek = WeekRow;
 export type LiveGame = { id: string; kickoff: string; status: GameRow["status"]; away: TeamRow; home: TeamRow; underdog: TeamRow; favorite: TeamRow; spread: number; awayScore: number | null; homeScore: number | null; period: string | null; clock: string | null; locked: boolean; available: boolean; revealed: boolean; manuallyOverridden: boolean };
 export type LivePick = { id: string; playerId: string; playerName: string; gameId: string; teamId: string; spread: number; finalPoints: number | null; submittedAt: string };
-export type PoolMember = { userId: string; displayName: string; role: Role; status: string; pickBlocked: boolean };
+export type PoolMember = { userId: string; displayName: string; email: string | null; requestedAt: string | null; role: Role; status: string; pickBlocked: boolean };
 export type ScheduledGame = { id: string; kickoff: string; away: TeamRow; home: TeamRow; hasLine: boolean; underdogTeamId: string | null; spread: number | null; lineSource: string | null; lineManuallyOverridden: boolean };
 export type PoolContext = { userId: string; displayName: string; pool: ActivePool | null; pendingPool: boolean; pickBlocked: boolean; weekSkipped: boolean; weeks: PoolWeek[]; week: WeekRow | null; weekWindow: NflWeekWindow | null; games: LiveGame[]; schedule: ScheduledGame[]; picks: LivePick[]; members: PoolMember[]; memberNotes: Record<string, string>; seasonTotals: Record<string, number>; lastSync: string | null };
 
@@ -70,8 +71,13 @@ export async function requirePoolContext(selectedWeek?: number, selectedSeasonTy
   const profileIds = [...new Set([...roster.map((member) => member.user_id), ...rawPicks.map((pick) => pick.player_id)])];
   const { data: profiles } = profileIds.length ? await db.from("profiles").select("id,display_name").in("id", profileIds) : { data: [] };
   const profileMap = new Map(((profiles ?? []) as unknown as ProfileRow[]).map((item) => [item.id, item.display_name]));
+  const { data: pendingDetailData } = active.role === "commissioner" ? await db.rpc("pending_pool_member_details", { p_pool_id: pool.id }) : { data: [] };
+  const pendingDetails = new Map(((pendingDetailData ?? []) as unknown as PendingMemberDetailRow[]).map((item) => [item.user_id, item]));
   const picks = rawPicks.map((pick) => ({ id: pick.id, playerId: pick.player_id, playerName: profileMap.get(pick.player_id) ?? "Pool member", gameId: pick.game_id, teamId: pick.team_id, spread: Number(pick.stored_spread), finalPoints: pick.final_points === null ? null : Number(pick.final_points), submittedAt: pick.submitted_at }));
-  const members = roster.map((member) => ({ userId: member.user_id, displayName: profileMap.get(member.user_id) ?? "Pool member", role: member.role, status: member.status, pickBlocked: Boolean(member.pick_blocked_at) }));
+  const members = roster.map((member) => {
+    const pendingDetail = pendingDetails.get(member.user_id);
+    return { userId: member.user_id, displayName: pendingDetail?.display_name ?? profileMap.get(member.user_id) ?? "Pool member", email: pendingDetail?.email ?? null, requestedAt: pendingDetail?.requested_at ?? null, role: member.role, status: member.status, pickBlocked: Boolean(member.pick_blocked_at) };
+  });
   const { data: noteData } = active.role === "commissioner" ? await db.from("pool_member_notes").select("member_id,note").eq("pool_id", pool.id) : { data: [] };
   const memberNotes = Object.fromEntries(((noteData ?? []) as MemberNoteRow[]).map((item) => [item.member_id, item.note]));
   const completeWeekIds = season[0] ? ((await db.from("weeks").select("id").eq("season_id", season[0].id).eq("status", "complete")).data ?? []).map((item) => item.id as string) : [];
