@@ -13,15 +13,16 @@ type ProfileRow = { id: string; display_name: string };
 type MemberNoteRow = { member_id: string; note: string };
 
 export type ActivePool = { id: string; name: string; role: Role };
+export type PoolWeek = WeekRow;
 export type LiveGame = { id: string; kickoff: string; status: GameRow["status"]; away: TeamRow; home: TeamRow; underdog: TeamRow; favorite: TeamRow; spread: number; awayScore: number | null; homeScore: number | null; period: string | null; clock: string | null; locked: boolean; available: boolean; revealed: boolean; manuallyOverridden: boolean };
 export type LivePick = { id: string; playerId: string; playerName: string; gameId: string; teamId: string; spread: number; finalPoints: number | null; submittedAt: string };
 export type PoolMember = { userId: string; displayName: string; role: Role; status: string; pickBlocked: boolean };
 export type ScheduledGame = { id: string; kickoff: string; away: TeamRow; home: TeamRow; hasLine: boolean; underdogTeamId: string | null; spread: number | null; lineSource: string | null; lineManuallyOverridden: boolean };
-export type PoolContext = { userId: string; displayName: string; pool: ActivePool | null; pendingPool: boolean; pickBlocked: boolean; week: WeekRow | null; games: LiveGame[]; schedule: ScheduledGame[]; picks: LivePick[]; members: PoolMember[]; memberNotes: Record<string, string>; seasonTotals: Record<string, number>; lastSync: string | null };
+export type PoolContext = { userId: string; displayName: string; pool: ActivePool | null; pendingPool: boolean; pickBlocked: boolean; weekSkipped: boolean; weeks: PoolWeek[]; week: WeekRow | null; games: LiveGame[]; schedule: ScheduledGame[]; picks: LivePick[]; members: PoolMember[]; memberNotes: Record<string, string>; seasonTotals: Record<string, number>; lastSync: string | null };
 
 export function supabaseConfigured(): boolean { return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY); }
 
-export async function requirePoolContext(): Promise<PoolContext> {
+export async function requirePoolContext(selectedWeek?: number): Promise<PoolContext> {
   if (!supabaseConfigured()) redirect("/login?error=unavailable");
   const db = await serverClient();
   const { data: { user } } = await db.auth.getUser();
@@ -30,12 +31,13 @@ export async function requirePoolContext(): Promise<PoolContext> {
   const { data: memberData } = await db.from("pool_members").select("pool_id,role,status,pick_blocked_at,pools(name)").eq("user_id", user.id);
   const memberships = (memberData ?? []) as unknown as MemberRow[];
   const active = memberships.find((member) => member.status === "active");
-  if (!active) return { userId: user.id, displayName: (profile as { display_name?: string } | null)?.display_name ?? "Player", pool: null, pendingPool: memberships.some((member) => member.status === "pending"), pickBlocked: false, week: null, games: [], schedule: [], picks: [], members: [], memberNotes: {}, seasonTotals: {}, lastSync: null };
+  if (!active) return { userId: user.id, displayName: (profile as { display_name?: string } | null)?.display_name ?? "Player", pool: null, pendingPool: memberships.some((member) => member.status === "pending"), pickBlocked: false, weekSkipped: false, weeks: [], week: null, games: [], schedule: [], picks: [], members: [], memberNotes: {}, seasonTotals: {}, lastSync: null };
   const pool = { id: active.pool_id, name: active.pools?.name ?? "GameDay Pool", role: active.role };
   const { data: seasons } = await db.from("seasons").select("id,nfl_season").eq("pool_id", pool.id).eq("is_active", true).limit(1);
   const season = (seasons ?? []) as Array<{ id: string; nfl_season: number }>;
-  const { data: weekData } = season[0] ? await db.from("weeks").select("id,nfl_week,status").eq("season_id", season[0].id).order("nfl_week", { ascending: false }).limit(1) : { data: [] };
-  const week = ((weekData ?? [])[0] ?? null) as WeekRow | null;
+  const { data: weekData } = season[0] ? await db.from("weeks").select("id,nfl_week,status").eq("season_id", season[0].id).order("nfl_week", { ascending: true }) : { data: [] };
+  const weeks = (weekData ?? []) as WeekRow[];
+  const week = weeks.find((item) => item.nfl_week === selectedWeek) ?? weeks.at(-1) ?? null;
   const { data: lineData } = await db.from("pool_game_lines").select("game_id,underdog_team_id,favorite_team_id,underdog_spread,source,manual_override").eq("pool_id", pool.id);
   const lines = (lineData ?? []) as unknown as LineRow[];
   const { data: gameData } = week && season[0] ? await db.from("games").select("id,kickoff_at,status,home_team_id,away_team_id,home_score,away_score,period,game_clock,manual_override").eq("nfl_season", season[0].nfl_season).eq("nfl_week", week.nfl_week) : { data: [] };
@@ -54,6 +56,8 @@ export async function requirePoolContext(): Promise<PoolContext> {
   }).sort((a, b) => new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime());
   const { data: pickData } = week ? await db.from("picks").select("id,player_id,game_id,team_id,stored_spread,final_points,submitted_at").eq("pool_id", pool.id).eq("week_id", week.id) : { data: [] };
   const rawPicks = (pickData ?? []) as unknown as PickRow[];
+  const { data: participationData } = week ? await db.from("pool_week_participation").select("week_id").eq("week_id", week.id).eq("member_id", user.id).maybeSingle() : { data: null };
+  const weekSkipped = Boolean(participationData);
   const { data: rosterData } = await db.from("pool_members").select("user_id,role,status,pick_blocked_at").eq("pool_id", pool.id);
   const roster = (rosterData ?? []) as Array<{ user_id: string; role: Role; status: string; pick_blocked_at: string | null }>;
   const profileIds = [...new Set([...roster.map((member) => member.user_id), ...rawPicks.map((pick) => pick.player_id)])];
@@ -70,5 +74,5 @@ export async function requirePoolContext(): Promise<PoolContext> {
     return totals;
   }, {});
   const { data: syncData } = await db.from("provider_syncs").select("succeeded_at").eq("provider", "balldontlie").not("succeeded_at", "is", null).order("succeeded_at", { ascending: false }).limit(1);
-  return { userId: user.id, displayName: (profile as { display_name?: string } | null)?.display_name ?? "Player", pool, pendingPool: false, pickBlocked: Boolean(active.pick_blocked_at), week, games, schedule, picks, members, memberNotes, seasonTotals, lastSync: ((syncData ?? [])[0] as { succeeded_at: string } | undefined)?.succeeded_at ?? null };
+  return { userId: user.id, displayName: (profile as { display_name?: string } | null)?.display_name ?? "Player", pool, pendingPool: false, pickBlocked: Boolean(active.pick_blocked_at), weekSkipped, weeks, week, games, schedule, picks, members, memberNotes, seasonTotals, lastSync: ((syncData ?? [])[0] as { succeeded_at: string } | undefined)?.succeeded_at ?? null };
 }

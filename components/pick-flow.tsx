@@ -41,6 +41,7 @@ export function PickFlow({ poolId, weekId, weekNumber, games, currentPick, saved
           <form action={submitPick} className="mt-6 grid gap-3">
             <input type="hidden" name="poolId" value={poolId}/>
             <input type="hidden" name="weekId" value={weekId}/>
+            <input type="hidden" name="week" value={weekNumber}/>
             <input type="hidden" name="gameId" value={candidate?.id ?? ""}/>
             <input type="hidden" name="teamId" value={candidate?.underdog.id ?? ""}/>
             <Button type="submit"><ShieldCheck size={16} className="mr-2"/>Confirm pick</Button>
