@@ -1,7 +1,9 @@
+import Link from "next/link";
 import { Activity, CalendarDays, ChevronDown, ClipboardCheck, ListChecks, Settings2, Users, UserPlus, UsersRound } from "lucide-react";
 import type { ReactNode } from "react";
 import { changeMemberRole, finalizeWeek, importSchedule, moderateMember, openWeek, recordManualResult, saveManualLine, saveMemberNote, saveScheduledLine, setMemberPickBlock, submitAssistedPick } from "@/app/actions/pool";
 import { InvitationForm } from "@/components/invitation-form";
+import { CommissionerSetupWizard } from "@/components/commissioner-setup-wizard";
 import { BottomNav, Header } from "@/components/navigation";
 import { Onboarding } from "@/components/onboarding";
 import { ResetPoolForm } from "@/components/reset-pool-form";
@@ -9,7 +11,7 @@ import { Button, Card, Pill } from "@/components/ui";
 import { requirePoolContext, type LiveGame, type PoolMember, type ScheduledGame } from "@/lib/data/pool";
 import { formatEastern } from "@/lib/domain/deadlines";
 
-export default async function AdminPage({ searchParams }: { searchParams: Promise<{ assisted?: string; error?: string; finalized?: string; imported?: string; memberBlock?: string; memberNote?: string; reset?: string; gamesUpdated?: string; oddsLines?: string; syncWarning?: string; week?: string }> }) {
+export default async function AdminPage({ searchParams }: { searchParams: Promise<{ assisted?: string; error?: string; finalized?: string; imported?: string; memberBlock?: string; memberNote?: string; reset?: string; gamesUpdated?: string; oddsLines?: string; syncWarning?: string; setup?: string; week?: string }> }) {
   const params = await searchParams;
   const selectedWeek = Number(params.week);
   const context = await requirePoolContext(Number.isInteger(selectedWeek) ? selectedWeek : undefined);
@@ -19,11 +21,12 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
 
   const active = context.members.filter((member) => member.status === "active");
   const pending = context.members.filter((member) => member.status === "pending");
+  const setupIncomplete = !context.week || !context.schedule.length || context.schedule.some((game) => !game.hasLine);
   const stats = [[String(active.length), "Active players", Users], [String(context.picks.length), "Picks submitted", ClipboardCheck], [String(pending.length), "Pending members", UserPlus], [context.lastSync ? "Live" : "Waiting", "NFL data", Activity]];
 
   return <main className="mx-auto min-h-screen max-w-5xl pb-24"><Header weekNumber={context.week?.nfl_week} weeks={context.weeks}/><section className="px-5 pt-6">
     <Pill className="border-[hsl(var(--primary)/.4)] text-[hsl(var(--primary))]">Commissioner area</Pill>
-    <h1 className="mt-3 text-3xl font-black">Run Week {context.week?.nfl_week ?? "—"}</h1>
+    <div className="mt-3 flex flex-wrap items-center justify-between gap-3"><h1 className="text-3xl font-black">Run Week {context.week?.nfl_week ?? "—"}</h1>{!setupIncomplete && <Link className="inline-flex" href={`/admin?setup=1&week=${context.week?.nfl_week ?? ""}`}><Button className="bg-white/10 text-white hover:bg-white/15">Open setup guide</Button></Link>}</div>
     {params.error && <Card className="mt-5 border-red-500/40 p-4 text-sm text-red-200">{params.error}</Card>}
     {params.imported !== undefined && <Card className="mt-5 border-[hsl(var(--primary)/.4)] p-4 text-sm text-[hsl(var(--primary))]">Official schedule refreshed: {params.gamesUpdated ?? "0"} game{params.gamesUpdated === "1" ? "" : "s"} imported or updated; {params.oddsLines ?? "0"} provider line{params.oddsLines === "1" ? "" : "s"} prefilled.</Card>}
     {params.syncWarning && <Card className="mt-5 border-amber-400/40 p-4 text-sm text-amber-100">Odds were not fully prefilled: {params.syncWarning} Add any missing line manually, then check the latest <code>provider_syncs</code> row.</Card>}
@@ -33,6 +36,7 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
     {params.finalized && <Card className="mt-5 border-[hsl(var(--primary)/.4)] p-4 text-sm text-[hsl(var(--primary))]">Week finalized. Season standings now include every official result.</Card>}
     {params.reset && <Card className="mt-5 border-[hsl(var(--primary)/.4)] p-4 text-sm text-[hsl(var(--primary))]">Pool reset. Members were retained; open a new week to start again.</Card>}
     <div className="mt-7 grid grid-cols-2 gap-3 md:grid-cols-4">{stats.map(([value, label, Icon]) => { const Symbol = Icon as typeof Users; return <Card className="p-4" key={label as string}><Symbol className="text-[hsl(var(--primary))]" size={18}/><p className="mt-5 text-2xl font-black">{value as string}</p><p className="text-xs font-bold text-[hsl(var(--muted))]">{label as string}</p></Card>; })}</div>
+    {(setupIncomplete || params.setup === "1") && <CommissionerSetupWizard activeMembers={active.length} poolId={pool.id} role={pool.role === "commissioner" ? "commissioner" : "co_commissioner"} schedule={context.schedule} week={context.week}/>}
     <CommissionerSection title="Pool setup" description="Invitations and data connection" icon={Settings2}>
       <div className="grid gap-4 md:grid-cols-2"><InvitationForm poolId={pool.id}/><Card className="p-5"><p className="eyebrow">NFL data</p><p className="mt-2 text-xl font-black text-[hsl(var(--primary))]">{context.lastSync ? "Connected" : "Awaiting sync"}</p><p className="mt-2 text-sm text-[hsl(var(--muted))]">{context.lastSync ? `Last successful sync: ${new Date(context.lastSync).toLocaleString()}` : "Deploy and schedule the Supabase sports-sync function."}</p></Card></div>
     </CommissionerSection>
