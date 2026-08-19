@@ -43,3 +43,9 @@ export async function signUpWithPassword(form: FormData) {
   if (data.session) redirect(next);
   redirect("/login?created=1");
 }
+
+export async function signOut() {
+  const supabase = await serverClient();
+  await supabase.auth.signOut();
+  redirect("/login?logged-out=1");
+}
