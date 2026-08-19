@@ -8,7 +8,7 @@ import { Button, Card } from "./ui";
 export function ResetPoolForm({ poolId }: { poolId: string }) {
   const [confirmation, setConfirmation] = useState("");
 
-  return <Card className="mt-6 border-red-500/35 p-5">
+  return <Card className="border-red-500/35 p-5">
     <p className="eyebrow text-red-300">Danger zone</p>
     <h2 className="mt-2 font-black">Reset pool gameplay</h2>
     <p className="mt-1 text-sm leading-6 text-[hsl(var(--muted))]">This removes picks, lines, weeks, seasons, and outstanding invitations. Your pool name and active members stay in place.</p>
