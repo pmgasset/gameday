@@ -82,7 +82,7 @@ export async function requirePoolContext(selectedWeek?: number, selectedSeasonTy
     const pendingDetail = pendingDetails.get(member.user_id);
     return { userId: member.user_id, displayName: pendingDetail?.display_name ?? profileMap.get(member.user_id) ?? "Pool member", email: pendingDetail?.email ?? null, requestedAt: pendingDetail?.requested_at ?? null, role: member.role, status: member.status, pickBlocked: Boolean(member.pick_blocked_at) };
   });
-  const { data: memberPickStatusData } = active.role === "commissioner" && week
+  const { data: memberPickStatusData } = active.role !== "player" && week
     ? await db.rpc("commissioner_weekly_pick_status", { p_pool_id: pool.id, p_week_id: week.id })
     : { data: [] };
   const memberPickStatuses = ((memberPickStatusData ?? []) as unknown as CommissionerMemberPickStatusRow[]).map((member) => ({ userId: member.user_id, displayName: member.display_name, email: member.email, picked: member.picked }));

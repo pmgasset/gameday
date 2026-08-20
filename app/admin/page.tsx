@@ -21,7 +21,7 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
 
   const active = context.members.filter((member) => member.status === "active");
   const pending = context.members.filter((member) => member.status === "pending");
-  const submittedCount = pool.role === "commissioner" ? context.memberPickStatuses.filter((member) => member.picked).length : context.picks.length;
+  const submittedCount = context.memberPickStatuses.length ? context.memberPickStatuses.filter((member) => member.picked).length : context.picks.length;
   const setupIncomplete = !context.week || !context.schedule.length || context.schedule.some((game) => !game.hasLine);
   const stats = [[String(active.length), "Active players", Users], [String(submittedCount), "Picks submitted", ClipboardCheck], [String(pending.length), "Pending members", UserPlus], [context.lastSync ? "Live" : "Waiting", "NFL data", Activity]];
 
@@ -41,7 +41,7 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
     <CommissionerSection title="Pool setup" description="Invitations and data connection" icon={Settings2}>
       <div className="grid gap-4 md:grid-cols-2"><InvitationForm poolId={pool.id}/><Card className="p-5"><p className="eyebrow">NFL data</p><p className="mt-2 text-xl font-black text-[hsl(var(--primary))]">{context.lastSync ? "Connected" : "Awaiting sync"}</p><p className="mt-2 text-sm text-[hsl(var(--muted))]">{context.lastSync ? `Last successful sync: ${new Date(context.lastSync).toLocaleString()}` : "Deploy and schedule the Supabase sports-sync function."}</p></Card></div>
     </CommissionerSection>
-    <SeasonWeekSetup poolId={pool.id} week={context.week}/><WeekAndLineTools poolId={pool.id} week={context.week} schedule={context.schedule}/><AssistedPickForm poolId={pool.id} weekId={context.week?.id} members={active} games={context.games}/><ResultsTools poolId={pool.id} week={context.week} games={context.games}/>{pool.role === "commissioner" && <WeeklyPickStatus week={context.week} members={context.memberPickStatuses}/>}<MemberList poolId={pool.id} commissioner={pool.role === "commissioner"} currentUserId={context.userId} members={context.members} notes={context.memberNotes}/>{pool.role === "commissioner" && <CommissionerSection title="Pool reset" description="Remove gameplay data while retaining members" icon={Settings2}><ResetPoolForm poolId={pool.id}/></CommissionerSection>}
+    <SeasonWeekSetup poolId={pool.id} week={context.week}/><WeekAndLineTools poolId={pool.id} week={context.week} schedule={context.schedule}/><AssistedPickForm poolId={pool.id} weekId={context.week?.id} members={active} games={context.games}/><ResultsTools poolId={pool.id} week={context.week} games={context.games}/><WeeklyPickStatus week={context.week} members={context.memberPickStatuses}/><MemberList poolId={pool.id} commissioner={pool.role === "commissioner"} currentUserId={context.userId} members={context.members} notes={context.memberNotes}/>{pool.role === "commissioner" && <CommissionerSection title="Pool reset" description="Remove gameplay data while retaining members" icon={Settings2}><ResetPoolForm poolId={pool.id}/></CommissionerSection>}
   </section><BottomNav/></main>;
 }
 
