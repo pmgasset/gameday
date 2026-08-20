@@ -19,6 +19,7 @@
 | Email/password authentication | IMPLEMENTED | `/login`, callback exchange, Supabase Auth profile trigger |
 | Session-bound production data repository | IMPLEMENTED | authenticated server data loader with Supabase RLS |
 | Season leaderboard and direct invitation join link | IMPLEMENTED | cumulative final-points query + `/join?token=…` flow |
+| New member onboarding to first pick | IMPLEMENTED | approval email via `lib/email` + derived `FirstPickGuide` on the player home |
 | Production E2E/RLS integration tests | NOT STARTED | requires local Supabase CI environment |
 | Documentation and environment template | IMPLEMENTED | required docs + `.env.example` |
 

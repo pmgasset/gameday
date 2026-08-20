@@ -2,10 +2,13 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { serverClient } from "@/lib/supabase/server";
+import { sendEmail, type EmailResult } from "@/lib/email/send";
+import { membershipApprovedEmail } from "@/lib/email/templates";
 import type { PoolSeasonType } from "@/lib/data/pool";
 
 export type InvitationState = { token?: string; error?: string };
 type SportsSyncResponse = { ok: boolean; affected?: number; warning?: string; gamesUpdated?: number; oddsLines?: number };
+type PendingApplicantRow = { user_id: string; display_name: string; email: string | null };
 
 function text(form: FormData, name: string): string { const value = form.get(name); return typeof value === "string" ? value : ""; }
 function seasonType(form: FormData): PoolSeasonType { const value=text(form,"seasonType"); return value === "preseason" || value === "postseason" ? value : "regular"; }
@@ -15,7 +18,15 @@ function fail(error: { message: string } | null): never { redirect(`/?error=${en
 export async function createPool(form: FormData) { const db=await serverClient(); const { error }=await db.rpc("create_pool",{p_name:text(form,"name")}); if(error) fail(error); revalidatePath("/"); redirect("/admin?setup=1"); }
 export async function submitPick(form: FormData) { const week=text(form,"week"), phase=seasonType(form), query=weekQuery(week,phase); const db=await serverClient(); const { error }=await db.rpc("submit_pick",{p_pool_id:text(form,"poolId"),p_week_id:text(form,"weekId"),p_game_id:text(form,"gameId"),p_team_id:text(form,"teamId")}); if(error) redirect(`/pick?${query}&error=${encodeURIComponent(error.message)}`); revalidatePath("/"); revalidatePath("/pick"); redirect(`/pick?${query}&saved=1`); }
 export async function submitAssistedPick(form: FormData) { const [gameId,teamId]=text(form,"selection").split("|"); if(!gameId || !teamId) redirect("/admin?error=Choose%20a%20game"); const db=await serverClient(); const { error }=await db.rpc("submit_pick",{p_pool_id:text(form,"poolId"),p_week_id:text(form,"weekId"),p_game_id:gameId,p_team_id:teamId,p_player_id:text(form,"playerId")}); if(error) redirect(`/admin?error=${encodeURIComponent(error.message)}`); revalidatePath("/"); revalidatePath("/pick"); revalidatePath("/admin"); redirect("/admin?assisted=1"); }
-export async function moderateMember(form: FormData) { const db=await serverClient(); const {error}=await db.rpc("moderate_membership",{p_pool_id:text(form,"poolId"),p_user_id:text(form,"userId"),p_status:text(form,"status")}); if(error) fail(error); revalidatePath("/admin"); }
+// Read while the applicant is still pending: `pending_pool_member_details`
+// returns only pending rows, and both it and `moderate_membership` are gated on
+// the same membership check, so approving already implies the right to read.
+async function approvalRecipient(db: Awaited<ReturnType<typeof serverClient>>, poolId: string, userId: string): Promise<{ email: string; displayName: string; poolName: string } | null> {
+  const [{ data: applicants }, { data: pool }] = await Promise.all([db.rpc("pending_pool_member_details",{p_pool_id:poolId}), db.from("pools").select("name").eq("id",poolId).maybeSingle()]);
+  const applicant = ((applicants ?? []) as unknown as PendingApplicantRow[]).find((item) => item.user_id === userId);
+  return applicant?.email ? { email: applicant.email, displayName: applicant.display_name, poolName: (pool as { name?: string } | null)?.name ?? "your GameDay pool" } : null;
+}
+export async function moderateMember(form: FormData) { const poolId=text(form,"poolId"), userId=text(form,"userId"), status=text(form,"status"); const db=await serverClient(); const recipient=status === "active" ? await approvalRecipient(db,poolId,userId) : null; const {error}=await db.rpc("moderate_membership",{p_pool_id:poolId,p_user_id:userId,p_status:status}); if(error) fail(error); revalidatePath("/admin"); if(status !== "active") return; const mail: EmailResult=recipient ? await sendEmail(membershipApprovedEmail({to:recipient.email,displayName:recipient.displayName,poolName:recipient.poolName,poolId})) : "failed"; redirect(`/admin?pool=${encodeURIComponent(poolId)}&approved=${encodeURIComponent(recipient?.displayName ?? "The member")}&mail=${mail}`); }
 export async function changeMemberRole(form: FormData) { const db=await serverClient(); const {error}=await db.rpc("set_pool_member_role",{p_pool_id:text(form,"poolId"),p_user_id:text(form,"userId"),p_role:text(form,"role")}); if(error) fail(error); revalidatePath("/admin"); }
 export async function saveMemberNote(form: FormData) { const db=await serverClient(); const {error}=await db.rpc("save_pool_member_note",{p_pool_id:text(form,"poolId"),p_member_id:text(form,"memberId"),p_note:text(form,"note")}); if(error) redirect(`/admin?error=${encodeURIComponent(error.message)}`); revalidatePath("/admin"); redirect("/admin?memberNote=1"); }
 export async function setMemberPickBlock(form: FormData) { const blocked=text(form,"blocked") === "true"; const db=await serverClient(); const {error}=await db.rpc("set_member_pick_block",{p_pool_id:text(form,"poolId"),p_member_id:text(form,"memberId"),p_blocked:blocked}); if(error) redirect(`/admin?error=${encodeURIComponent(error.message)}`); revalidatePath("/"); revalidatePath("/pick"); revalidatePath("/picks"); revalidatePath("/standings"); revalidatePath("/admin"); redirect(`/admin?memberBlock=${blocked ? "paused" : "cleared"}`); }

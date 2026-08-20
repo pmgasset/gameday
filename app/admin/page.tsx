@@ -11,7 +11,7 @@ import { Button, Card, Pill } from "@/components/ui";
 import { requirePoolContext, type CommissionerMemberPickStatus, type LiveGame, type PoolMember, type ScheduledGame } from "@/lib/data/pool";
 import { formatEastern } from "@/lib/domain/deadlines";
 
-export default async function AdminPage({ searchParams }: { searchParams: Promise<{ assisted?: string; error?: string; finalized?: string; imported?: string; memberBlock?: string; memberNote?: string; reset?: string; gamesUpdated?: string; oddsLines?: string; syncWarning?: string; setup?: string; week?: string; seasonType?: "preseason" | "regular" | "postseason"; pool?: string }> }) {
+export default async function AdminPage({ searchParams }: { searchParams: Promise<{ approved?: string; assisted?: string; error?: string; finalized?: string; imported?: string; mail?: string; memberBlock?: string; memberNote?: string; reset?: string; gamesUpdated?: string; oddsLines?: string; syncWarning?: string; setup?: string; week?: string; seasonType?: "preseason" | "regular" | "postseason"; pool?: string }> }) {
   const params = await searchParams;
   const selectedWeek = Number(params.week);
   const context = await requirePoolContext(Number.isInteger(selectedWeek) ? selectedWeek : undefined, params.seasonType, params.pool);
@@ -31,6 +31,7 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
     {params.error && <Card className="mt-5 border-red-500/40 p-4 text-sm text-red-200">{params.error}</Card>}
     {params.imported !== undefined && <Card className="mt-5 border-[hsl(var(--primary)/.4)] p-4 text-sm text-[hsl(var(--primary))]">Official schedule refreshed: {params.gamesUpdated ?? "0"} game{params.gamesUpdated === "1" ? "" : "s"} imported or updated; {params.oddsLines ?? "0"} provider line{params.oddsLines === "1" ? "" : "s"} prefilled.</Card>}
     {params.syncWarning && <Card className="mt-5 border-amber-400/40 p-4 text-sm text-amber-100">Odds were not fully prefilled: {params.syncWarning} Add any missing line manually, then check the latest <code>provider_syncs</code> row.</Card>}
+    {params.approved && <ApprovalNotice name={params.approved} mail={params.mail}/>}
     {params.assisted && <Card className="mt-5 border-[hsl(var(--primary)/.4)] p-4 text-sm text-[hsl(var(--primary))]">Assisted pick saved and recorded in the audit trail.</Card>}
     {params.memberBlock && <Card className="mt-5 border-[hsl(var(--primary)/.4)] p-4 text-sm text-[hsl(var(--primary))]">{params.memberBlock === "paused" ? "Pick access paused. The member will see a contact-the-commissioner message." : "Pick access restored for the member."}</Card>}
     {params.memberNote && <Card className="mt-5 border-[hsl(var(--primary)/.4)] p-4 text-sm text-[hsl(var(--primary))]">Private member note saved.</Card>}
@@ -43,6 +44,14 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
     </CommissionerSection>
     <SeasonWeekSetup poolId={pool.id} week={context.week}/><WeekAndLineTools poolId={pool.id} week={context.week} schedule={context.schedule}/><AssistedPickForm poolId={pool.id} weekId={context.week?.id} members={active} games={context.games}/><ResultsTools poolId={pool.id} week={context.week} games={context.games}/><WeeklyPickStatus week={context.week} members={context.memberPickStatuses}/><MemberList poolId={pool.id} commissioner={pool.role === "commissioner"} currentUserId={context.userId} members={context.members} notes={context.memberNotes}/>{pool.role === "commissioner" && <CommissionerSection title="Pool reset" description="Remove gameplay data while retaining members" icon={Settings2}><ResetPoolForm poolId={pool.id}/></CommissionerSection>}
   </section><BottomNav/></main>;
+}
+
+// The approval itself always succeeded by the time this renders; only the
+// welcome email can have failed, and the commissioner needs to know when it did
+// so they can pass the link along another way.
+function ApprovalNotice({ name, mail }: { name: string; mail?: string }) {
+  if (mail === "sent") return <Card className="mt-5 border-[hsl(var(--primary)/.4)] p-4 text-sm text-[hsl(var(--primary))]">{name} is now active. A welcome email with their first-pick link is on the way.</Card>;
+  return <Card className="mt-5 border-amber-400/40 p-4 text-sm text-amber-100">{name} is now active, but no welcome email was sent{mail === "off" ? " because email delivery is not configured" : ""}. Send them the pool link directly so they know they can pick.</Card>;
 }
 
 function SeasonWeekSetup({ poolId, week }: { poolId: string; week: { nfl_week: number; season_type: "preseason" | "regular" | "postseason" } | null }) {
