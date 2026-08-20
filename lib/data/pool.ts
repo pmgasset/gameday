@@ -22,11 +22,11 @@ export type LivePick = { id: string; playerId: string; playerName: string; gameI
 export type PoolMember = { userId: string; displayName: string; email: string | null; requestedAt: string | null; role: Role; status: string; pickBlocked: boolean };
 export type CommissionerMemberPickStatus = { userId: string; displayName: string; email: string | null; picked: boolean };
 export type ScheduledGame = { id: string; kickoff: string; away: TeamRow; home: TeamRow; hasLine: boolean; underdogTeamId: string | null; spread: number | null; lineSource: string | null; lineManuallyOverridden: boolean };
-export type PoolContext = { userId: string; displayName: string; pool: ActivePool | null; pendingPool: boolean; pickBlocked: boolean; weekSkipped: boolean; weeks: PoolWeek[]; week: WeekRow | null; weekWindow: NflWeekWindow | null; games: LiveGame[]; schedule: ScheduledGame[]; picks: LivePick[]; members: PoolMember[]; memberPickStatuses: CommissionerMemberPickStatus[]; memberNotes: Record<string, string>; seasonTotals: Record<string, number>; lastSync: string | null };
+export type PoolContext = { userId: string; displayName: string; pools: ActivePool[]; pool: ActivePool | null; pendingPool: boolean; pickBlocked: boolean; weekSkipped: boolean; weeks: PoolWeek[]; week: WeekRow | null; weekWindow: NflWeekWindow | null; games: LiveGame[]; schedule: ScheduledGame[]; picks: LivePick[]; members: PoolMember[]; memberPickStatuses: CommissionerMemberPickStatus[]; memberNotes: Record<string, string>; seasonTotals: Record<string, number>; lastSync: string | null };
 
 export function supabaseConfigured(): boolean { return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY); }
 
-export async function requirePoolContext(selectedWeek?: number, selectedSeasonType?: PoolSeasonType): Promise<PoolContext> {
+export async function requirePoolContext(selectedWeek?: number, selectedSeasonType?: PoolSeasonType, selectedPoolId?: string): Promise<PoolContext> {
   if (!supabaseConfigured()) redirect("/login?error=unavailable");
   const db = await serverClient();
   const { data: { user } } = await db.auth.getUser();
@@ -34,8 +34,10 @@ export async function requirePoolContext(selectedWeek?: number, selectedSeasonTy
   const { data: profile } = await db.from("profiles").select("display_name").eq("id", user.id).maybeSingle();
   const { data: memberData } = await db.from("pool_members").select("pool_id,role,status,pick_blocked_at,pools(name)").eq("user_id", user.id);
   const memberships = (memberData ?? []) as unknown as MemberRow[];
-  const active = memberships.find((member) => member.status === "active");
-  if (!active) return { userId: user.id, displayName: (profile as { display_name?: string } | null)?.display_name ?? "Player", pool: null, pendingPool: memberships.some((member) => member.status === "pending"), pickBlocked: false, weekSkipped: false, weeks: [], week: null, weekWindow: null, games: [], schedule: [], picks: [], members: [], memberPickStatuses: [], memberNotes: {}, seasonTotals: {}, lastSync: null };
+  const activeMemberships = memberships.filter((member) => member.status === "active");
+  const pools = activeMemberships.map((member) => ({ id: member.pool_id, name: member.pools?.name ?? "GameDay Pool", role: member.role }));
+  const active = activeMemberships.find((member) => member.pool_id === selectedPoolId) ?? activeMemberships[0];
+  if (!active) return { userId: user.id, displayName: (profile as { display_name?: string } | null)?.display_name ?? "Player", pools: [], pool: null, pendingPool: memberships.some((member) => member.status === "pending"), pickBlocked: false, weekSkipped: false, weeks: [], week: null, weekWindow: null, games: [], schedule: [], picks: [], members: [], memberPickStatuses: [], memberNotes: {}, seasonTotals: {}, lastSync: null };
   const pool = { id: active.pool_id, name: active.pools?.name ?? "GameDay Pool", role: active.role };
   const { data: seasons } = await db.from("seasons").select("id,nfl_season").eq("pool_id", pool.id).eq("is_active", true).limit(1);
   const season = (seasons ?? []) as Array<{ id: string; nfl_season: number }>;
@@ -93,5 +95,5 @@ export async function requirePoolContext(selectedWeek?: number, selectedSeasonTy
     return totals;
   }, {});
   const { data: syncData } = await db.from("provider_syncs").select("succeeded_at").eq("provider", "balldontlie").not("succeeded_at", "is", null).order("succeeded_at", { ascending: false }).limit(1);
-  return { userId: user.id, displayName: (profile as { display_name?: string } | null)?.display_name ?? "Player", pool, pendingPool: false, pickBlocked: Boolean(active.pick_blocked_at), weekSkipped, weeks, week, weekWindow, games, schedule, picks, members, memberPickStatuses, memberNotes, seasonTotals, lastSync: ((syncData ?? [])[0] as { succeeded_at: string } | undefined)?.succeeded_at ?? null };
+  return { userId: user.id, displayName: (profile as { display_name?: string } | null)?.display_name ?? "Player", pools, pool, pendingPool: false, pickBlocked: Boolean(active.pick_blocked_at), weekSkipped, weeks, week, weekWindow, games, schedule, picks, members, memberPickStatuses, memberNotes, seasonTotals, lastSync: ((syncData ?? [])[0] as { succeeded_at: string } | undefined)?.succeeded_at ?? null };
 }

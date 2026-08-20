@@ -11,13 +11,13 @@ import { Button, Card, Pill } from "@/components/ui";
 import { requirePoolContext, type CommissionerMemberPickStatus, type LiveGame, type PoolMember, type ScheduledGame } from "@/lib/data/pool";
 import { formatEastern } from "@/lib/domain/deadlines";
 
-export default async function AdminPage({ searchParams }: { searchParams: Promise<{ assisted?: string; error?: string; finalized?: string; imported?: string; memberBlock?: string; memberNote?: string; reset?: string; gamesUpdated?: string; oddsLines?: string; syncWarning?: string; setup?: string; week?: string; seasonType?: "preseason" | "regular" | "postseason" }> }) {
+export default async function AdminPage({ searchParams }: { searchParams: Promise<{ assisted?: string; error?: string; finalized?: string; imported?: string; memberBlock?: string; memberNote?: string; reset?: string; gamesUpdated?: string; oddsLines?: string; syncWarning?: string; setup?: string; week?: string; seasonType?: "preseason" | "regular" | "postseason"; pool?: string }> }) {
   const params = await searchParams;
   const selectedWeek = Number(params.week);
-  const context = await requirePoolContext(Number.isInteger(selectedWeek) ? selectedWeek : undefined, params.seasonType);
+  const context = await requirePoolContext(Number.isInteger(selectedWeek) ? selectedWeek : undefined, params.seasonType, params.pool);
   const pool = context.pool;
-  if (!pool) return <main className="min-h-screen"><Header weekNumber={context.week?.nfl_week} seasonType={context.week?.season_type} weeks={context.weeks}/><Onboarding pending={context.pendingPool}/><BottomNav/></main>;
-  if (pool.role !== "commissioner" && pool.role !== "co_commissioner") return <main className="min-h-screen"><Header weekNumber={context.week?.nfl_week} seasonType={context.week?.season_type} weeks={context.weeks}/><section className="mx-auto max-w-xl px-5 pt-16"><h1 className="text-3xl font-black">Commissioner access required</h1></section><BottomNav/></main>;
+  if (!pool) return <main className="min-h-screen"><Header weekNumber={context.week?.nfl_week} seasonType={context.week?.season_type} weeks={context.weeks} pools={context.pools} pool={context.pool}/><Onboarding pending={context.pendingPool}/><BottomNav/></main>;
+  if (pool.role !== "commissioner" && pool.role !== "co_commissioner") return <main className="min-h-screen"><Header weekNumber={context.week?.nfl_week} seasonType={context.week?.season_type} weeks={context.weeks} pools={context.pools} pool={context.pool}/><section className="mx-auto max-w-xl px-5 pt-16"><h1 className="text-3xl font-black">Commissioner access required</h1></section><BottomNav/></main>;
 
   const active = context.members.filter((member) => member.status === "active");
   const pending = context.members.filter((member) => member.status === "pending");
@@ -25,7 +25,7 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
   const setupIncomplete = !context.week || !context.schedule.length || context.schedule.some((game) => !game.hasLine);
   const stats = [[String(active.length), "Active players", Users], [String(submittedCount), "Picks submitted", ClipboardCheck], [String(pending.length), "Pending members", UserPlus], [context.lastSync ? "Live" : "Waiting", "NFL data", Activity]];
 
-  return <main className="mx-auto min-h-screen max-w-5xl pb-24"><Header weekNumber={context.week?.nfl_week} seasonType={context.week?.season_type} weeks={context.weeks}/><section className="px-5 pt-6">
+  return <main className="mx-auto min-h-screen max-w-5xl pb-24"><Header weekNumber={context.week?.nfl_week} seasonType={context.week?.season_type} weeks={context.weeks} pools={context.pools} pool={context.pool}/><section className="px-5 pt-6">
     <Pill className="border-[hsl(var(--primary)/.4)] text-[hsl(var(--primary))]">Commissioner area</Pill>
     <div className="mt-3 flex flex-wrap items-center justify-between gap-3"><h1 className="text-3xl font-black">Run Week {context.week?.nfl_week ?? "—"}</h1>{!setupIncomplete && <Link className="inline-flex" href={`/admin?setup=1&week=${context.week?.nfl_week ?? ""}&seasonType=${context.week?.season_type ?? "regular"}`}><Button className="bg-white/10 text-white hover:bg-white/15">Open setup guide</Button></Link>}</div>
     {params.error && <Card className="mt-5 border-red-500/40 p-4 text-sm text-red-200">{params.error}</Card>}
