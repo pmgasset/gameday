@@ -80,7 +80,7 @@ export async function requirePoolContext(selectedWeek?: number, selectedSeasonTy
   const profileIds = [...new Set([...roster.map((member) => member.user_id), ...rawPicks.map((pick) => pick.player_id)])];
   const { data: profiles } = profileIds.length ? await db.from("profiles").select("id,display_name").in("id", profileIds) : { data: [] };
   const profileMap = new Map(((profiles ?? []) as unknown as ProfileRow[]).map((item) => [item.id, item.display_name]));
-  const { data: pendingDetailData } = active.role === "commissioner" ? await db.rpc("pending_pool_member_details", { p_pool_id: pool.id }) : { data: [] };
+  const { data: pendingDetailData } = active.role !== "player" ? await db.rpc("pending_pool_member_details", { p_pool_id: pool.id }) : { data: [] };
   const pendingDetails = new Map(((pendingDetailData ?? []) as unknown as PendingMemberDetailRow[]).map((item) => [item.user_id, item]));
   const picks = rawPicks.map((pick) => ({ id: pick.id, playerId: pick.player_id, playerName: profileMap.get(pick.player_id) ?? "Pool member", gameId: pick.game_id, teamId: pick.team_id, spread: Number(pick.stored_spread), finalPoints: pick.final_points === null ? null : Number(pick.final_points), submittedAt: pick.submitted_at }));
   const members = roster.map((member) => {
